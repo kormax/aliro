@@ -1,6 +1,5 @@
 # Aliro
 
-
 <p float="left">
  <img src="./assets/IS.THIS.REAL.webp" alt="![Video depicting an Aliro credential being read, this video hasn't been doctored, but there are tricks involved in making it]" width=200px>
 </p>
@@ -9,7 +8,7 @@
 > [!NOTE]  
 > Aliro protocol is under development and has a 2025 release target. No publicly known implementations are available to users yet.
 > 
-> This repository serves as a collection of all technical and non-technical information available at this moment, alongside some speculation and guessing. It has a big potential of becoming obsolete in the near future, considering the good track record of CSA in regards to opening up access to their specifications.
+> This repository serves as a collection of all technical and non-technical information available at this moment, alongside some speculation and guessing. It has a big potential of becoming obsolete in the near future, considering that CSA might open up access to their specification.
 > 
 
 
@@ -18,7 +17,6 @@
 ## Introduction
 
 Aliro is a standardized communication protocol between access readers and user devices;
-
 
 
 ## Development
@@ -71,10 +69,11 @@ Meanwhile, starting from Spring 2024, the internal code of different OEMs had st
 - Android 15 source code gained UWB implementation;
 - Google Play Services gained references to Aliro HCE service;
 - IOS 17.5 contains Matter support headers related to Aliro lock configuration and credential provisioning;
-- IOS might contain references to Aliro (or plain UnifiedAccess, which the Aliro is the derivative of) under the "Hydra" codename.
+- IOS 18.0 Beta contains tons of referenes to Aliro, including Applet references;
+- ~~IOS might contain references to Aliro (or plain UnifiedAccess, which the Aliro is the derivative of) under the "Hydra" codename~~ (Hydra is a codename affix for symbols related to `UnifiedAccess`-based access passes).
 
 Considering the fact that parts of code related to Aliro have been shipped to customer devices in those cases, means that the protocol implementation is already undergoing active testing.  
-There's a non-zero chance of Google mentioning Aliro on Google IO in May, or Apple at WWDC in June.
+~~There's a non-zero chance of Google mentioning Aliro on Google IO in May, or Apple at WWDC in June~~ (Nope).
 
 Taking a broad guess, we could see Aliro releasing anywhen starting from Summer 2024 (as a developer preview, if specification is opened), up to Autumn 2024 (when Android 15, IOS 18 release, alongside their respective flagship devices), or Winter 2024/2025.
 
@@ -82,7 +81,6 @@ Considering that Aliro is intended for both residential and commercial access co
 
 
 # Technical details
-
 
 ## Communication modes
 
@@ -114,6 +112,7 @@ There is no information in regards to the use of Enhanced Contactless Polling or
 Considering that Apple had historically used ECP for all* express-mode-enabled passes and that Google is steamrolling PLF implementation into Android 15's NFC stack, there's a high chance that both device groups will employ the use of their respective polling augmentation technology alongside Aliro.
 
 What poses a question is whether NFC polling augmentation will fall outside the Aliro specification and become a matter of direct agreement between each hardware manufacturer and Apple and Google, or if both sides may opt to support each other's technologies or even share a common data format for ideal interoperability.
+
 
 ### Applets and Application Identifiers
 
@@ -149,12 +148,11 @@ This could mean one of the following:
   * There are no restrictions on how credential data is stored;
   * Credential data must be stored at least in semi-secure location, like on the TEE;
   * Credential data must be located in the secure/external hardware, specifics on if the secure hardware must be connected directly to radio or can access radio indirectly through a CPU + Software don't matter. StrongBox Keymaster could be an example of an implementation meeting this criteria, as it stores key data in a secure element, but cryptographic operations are performed on behalf of the operating system.   
-- HCE is used by Google internally for testing purposes only. In this case, it would also mean that the cool `ACCE55` AID affixes might not be used;
+- ~~HCE is used by Google internally for testing purposes only. In this case, it would also mean that the cool `ACCE55` AID affixes might not be used~~ (IOS18 firmware confirms that `ACCE55` is the official AID);
 
 All of these theories have an equal chance of being true, considering that Aliro might sidestep some limitations similar to the ones enforced by Car Key spec in order to get much broader support, as there are still many Android devices lacking a dedicated SE, let alone an "Android Ready SE" compatible one, but there are lots that contain a TEE, which can also be used for similar purposes, even if not considered as secure, while being miles better than plain OS-level software-based implementation.  
 
 Regardless of that, SE-backed implementation will surely be an option and used by Apple. It also might be available for premium Android devices, in order to allow operation in low battery situations, but at this moment there are no clues leading to that.
-
 
 
 ## UWB
@@ -228,16 +226,213 @@ When comparing to the Home Key protocol, there's also a question on how key revo
 
 This issue would be solved if evictable or all credentials instead use a limited identifier pool, which would allow evicting a credential by removing a related identifier from all readers, thus invalidating the attestation package from being replayed.
 
+
+# IOS18 Symbols and references
+
+Latest IOS18 beta release presents a tresure trove of strings, symbols, and other references to Aliro.  
+This section features a collection of all found instances, including some comments if applicable.
+
+
+## Strings
+
+### `PrivateFrameworks/Home.framework`
+
+#### `HFSensitiveStrings-WalletKeyUWB`
+
+```json
+{
+    "WalletKeyUncertified": "This accessory has not been certified to work with HomeKit so some features may not be available such as Approach to Unlock or Tap to Unlock.",
+    "WalletKeyUWBApproachAngle_Left": "Left",
+    "WalletKeyUWB_ApproachAngleView_Title": "Approach Direction",
+    "HFAccessoryDetails_Lock_Approach_Angle_Footer": "Customize this lock to only detect an approach from certain directions. This will help prevent the door unlocking accidentally.",
+    "WalletKeyUWBApproachAngle_Description": "Customize this lock to only detect an approach from certain directions. This will help prevent the door unlocking accidentally.",
+    "WalletKeyUWBApproachAngle_Right": "Right",
+    "WalletKeyUWBApproachAngle_Center": "Front"
+}
+```
+
+1. Aliro-based keys will either not be generated if no certified devices are found in your home, or Apple was kind enough to warn people that some of their locks won't work with "express mode" like functionality if the manufacturer didn't talk to the "right" people;
+2. You will be able to configure UWB approach direction that triggers an unlock.
+
+
+### `PrivateFrameworks/PassKit.framework`
+
+#### `HomeKitUWB`
+
+```json
+{
+    "UWB_UPDATE_FAILED_BODY_UNLOCK_ONLY_HOME_KEY": "Unlock on Approach uses Ultra Wideband technology. You will not be able to lock & unlock your door until your iPhone has been updated.",
+    "DASHBOARD_HOME_ACCESS_RESTRICTED_TITLE": "Access Restricted",
+    "DASHBOARD_HOME_ACCESS_RESTRICTED_MESSAGE": "Check your scheduled access times to see when you can use this key.",
+    "HOME_KEY_UNLOCK_ON_APPROACH_TITLE": "Unlock on Approach",
+    "KNOWN_PROHIBITED_LOCATION_BODY_UNLOCK_ONLY_HOME_KEY": "Unlock on Approach uses Ultra Wideband technology, which is prohibited in this area. Hold iPhone near reader to lock & unlock or move to another location.",
+    "BLUETOOTH_DISABLED_BODY_UNLOCK_ONLY_HOME_KEY": "You cannot use Unlock on Approach while Bluetooth is off. Hold iPhone near reader to lock & unlock.",
+    "PASS_DETAILS_SHOW_ACCESS_SCHEDULE_TITLE": "Access Schedule",
+    "AIRPLANE_MODE_ENABLED_BODY_UNLOCK_ONLY_HOME_KEY": "You cannot use Unlock on Approach while Airplane Mode is on. Hold iPhone near reader to lock & unlock."
+}
+```
+
+1. Aliro-based keys will support Access Schedules;
+2. Aliro-based keys will also be branded as "Home Keys", potentially housing two applets under a single "pass" for UX reasons;
+3. NFC will be an alternative to (UWB + BLE)-based authentication;
+4. Access schedule feature would be meaningless for full-fledged home members, so this also indirectly implies support for key sharing.  
+Although, this doesn't confirm that sharing will be "open", as it is very likely to rely on the new HomeKit "Guest" feature. 
+
+
+### `Library/SEStorage`
+
+#### `appletMID`
+
+```json
+{
+  "COPERNICUSALIRO": {
+      "instance": [
+          "A000000909ACCE5501"
+      ],
+      "primary": [
+          "A000000704D011500000000004000000"
+      ],
+      "container": [
+          "A000000704D011500000000001000000"
+      ],
+      "isSystemApplet": false
+  },
+}
+```
+
+1. As expected, Aliro is based on `UnifiedAccess` protocol, and Apple implementation uses the same `Copernicus` applet;
+2. `A000000909ACCE55` is the AID prefix used by Aliro. 
+
+
+#### `memoryUsages`
+
+```json
+{
+  "COPERNICUSALIRO": {
+    "selectableMemory": {
+        "cod": 17, "cor": 2, "usedIndices": 26, "pHeap": 1038
+    },
+    "packageMemory": {
+        "cod": 0, "cor": 0, "usedIndices": 63, "pHeap": 56972
+    },
+    "pids": [
+        "A000000704EF00010000",
+        "A000000704D011500000000004000000"
+    ],
+    "personalizedMemory": {
+        "cod": 4515, "cor": 35, "usedIndices": 11, "pHeap": 352
+    },
+    "containerMemory": {
+        "cod": 2080, "cor": 74, "usedIndices": 52, "pHeap": 1088
+    },
+    "policy": 0
+  }
+}f
+```
+
+1. `A000000704` seems to be a RID used by Apple;
+2. Copernicus applet seems to be at least ~57KB big.
+
+> [!TIP]  
+> Memory sizes are listed in bytes.
+>
+> `PERSISTEND`- `pHeap` memory used at all times;
+> `CLEAR_ON_DESELECT`- `cod` memory released after the applet is deselected (partially deactivated);  
+> `CLEAR_ON_RESET` - `cor` memory released after the card is reset (fully deactivated);  
+> 
+> `PACKAGE` - memory taken by applet data and executable code;  
+> `SELECTABLE` - memory used when applet is selected;  
+> `PERSONALIZED` - memory used by each applet instance (all);  
+> `CONTAINER` - **If someone familiar with JavaCard knows what it memory type could mean, It would be great if you could chime in and give an explanation.**
+>
+
+
+## Symbols
+
+### `PassKit.framework/PassKitCore`
+
+* `PKPaymentApplicationType`:
+  * `Aliro`;
+* `PKAuxiliaryCapability`:
+  * `HydraAliroEnabled`;
+  * `HydraAliroEnabledKey`;
+* `PKPassAuxiliaryCapabilitySignatureAliro`:
+  * `HomeKeyCreationMetadata`;
+  * `HydraKeyCreationMetadata`.
+* `ptaAliro`;
+* `signatureAliroHydra`;
+* `signatureAliroHome`;
+* `aliroHome`;
+* `readerGroupPublicKey`;
+* `aliroGroupResolvingKeys`;
+* `purpleTrustAirAliroAppletType`;
+* `appletTypePurpleTrustAirAliro`;
+* `createAliroHomeKey(seid, readerIdentifier, readerPublicKey, homeIdentifier)`;
+* `createAliroHydraKey(seid, serverParameters)`;
+* `PKSharingMessageFormatAppleHomeKeyKey`.
+
+1. `Hydra` is a codename for `UnifiedAccess` - based access passes that are not home keys;
+2. `Home` version of Aliro credentials will be provisioned locally on a device;
+3. `Hydra` version of Aliro credentials will be generated with a participation of a server (which means that dues $$$ will be paid by those who are planning on using Aliro for general-use access);
+4. It seems like old Home Keys were intended to be shareable (or related symbols are a stub used for `silent` sharing);
+5. As already confirmed by Matter source code, the same cryptographic primitives will be used as in regular `UnifiedAccess` (apart from the new `verificationKey`, which is strangely missing here).
+
+
+### `DigitalAccess.framework/DigitalAccess`
+
+* `getAliroSupportedProtocolVersions`;
+* `updateAliroCredentialDocumentStatus(seid, keyIdentifier, accessDocumentPresent, accessDocumentSignedTimestamp, revocationDocumentPresent, revocationDocumentSignedTimestamp)`;
+
+1. Aliro's attestation packages will seemingly be called `accessDocument`, as they could also be `signed`;
+2. Presence of `revocationDocument` and `seid` in parameters could mean that Aliro is using secure element for storage of attestation packages. 
+3. Considering that this framework contains many references to `sharing` and `attestation`, but no references to `purpleTrust`, could mean that the latter has nothing to do with attestations and something to do with crypto key storage instead.
+
+
+### `Home.framework/Home`
+
+* `supportsUWBUnlock`;
+* `setExpressSettingsAuthData(enableUWB, enableNFCExpress)`;
+* `containsWalletKeyUWBAccessory`;
+* `accessoriesSupportingUWBUnlock`;
+
+1. Aliro Home keys are also referenced as "UWB Home Keys".
+
+
+### `HomeKitMatter.framework/HomeKitMatter`
+
+* `doorLockFeatureMapSupportsAliro`:
+  * `BLEUWB`;
+  * `Provisioning`;
+* `readAttributeAliro`:
+  * `ReaderVerificationKey`;
+  * `ReaderGroupSubIdentifier`;
+  * `GroupResolvingKey`;
+  * `ReaderGroupIdentifier`;
+
+1. Aliro BLE + UWB feature is optional;
+2. Aliro locks might have "group sub-identifiers";
+3. `verificationKey` is only referenced here, and could be used as a "privacy" key injected into all credentials, but it's not referenced anywhere else.  
+
+
 # Notes 
 
 - I take no ownership of any information presented here. Presented code snippets, if available, were taken directly from public sources referenced below; 
-
 - The following software was analysed on the presence of Aliro-related code.
   * IOS 17.5 restore firmware file for iPhone 15 Pro Max:
     `iPhone16,2_17.5_21F5073b_Restore.ipsw`.
+  * IOS 18.0 Beta 1 restore firmware file for iPhone 15 Pro Max:
+    `iPhone16,2_18.0_22A5282m_Restore`.
   * Google Play Services APK files starting from February 2024:
     `com.google.android.gms_24.15.17`.    
-- The term "OEM" is used exclusively here to refer to consumer device manufacturers, such as Apple, Google, Samsung, etc.
+- The term "OEM" is used exclusively here to refer to consumer device manufacturers, such as Apple, Google, Samsung, etc;
+- If you find any typos, mistakes, or have additional info to share, feel free to create a PR or raise an issue.
+
+
+# Special thanks
+
+* [@kupa22](https://github.com/kupa22) - for helping with looking into and finding IOS18 framework symbols;
+* [@vincentpeyrouse](https://github.com/vincentpeyrouse) - for being first to report on some IOS18-related discoveries (strings and JSON files), finding clues leading into `DigitalAccess.framework`;
+* [@rednblkx](https://github.com/rednblkx) (and @vincentpeyrouse) for reporting on their `purpleTrust`-related findings and participating in a discussion.
 
 
 # References
