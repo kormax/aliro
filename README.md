@@ -1,14 +1,14 @@
 # Aliro
 
 <p float="left">
- <img src="./assets/IS.THIS.REAL.webp" alt="![Video depicting an Aliro credential being read, this video hasn't been doctored, but there are tricks involved in making it]" width=200px>
+ <img src="./assets/IS.THIS.REAL.webp" alt="Video depicting an Aliro credential being read" width=200px>
 </p>
 <sub>Please, don't freak out about the video.</sub>  
 
 > [!NOTE]  
 > Aliro protocol is under development and has a 2025 release target. No publicly known implementations are available to users yet.
 > 
-> This repository serves as a collection of all technical and non-technical information available at this moment, alongside some speculation and guessing. It has a big potential of becoming obsolete in the near future, considering that CSA might open up access to their specification.
+> This repository serves as a collection of all technical and non-technical information available at this moment, alongside some speculation and guessing. It has a high chance of becoming obsolete in the near future, considering that CSA might open up access to their specification.
 > 
 
 
@@ -16,7 +16,7 @@
 
 ## Introduction
 
-Aliro is a standardized communication protocol between access readers and user devices;
+Aliro is a standardized communication protocol between access readers and user devices.
 
 
 ## Development
@@ -55,27 +55,23 @@ The following additional features of Aliro have been mentioned in one way or ano
   - NFC;
   - BLE + UWB.
 
-One thing to keep in mind is that the mention of any of those features does not mean that they'll end up in the final release of the specification, or if a particular OEM is in the right mood to implement all of them:
-  - With Car and Home keys, the protocol seemingly offers support for requesting strong authentication (aka, no express mode). Apple devices ignore that parameter and authenticate anyway, although it's possible that this feature is not implemented by anyone in that matter;
-  - With Car Keys, one implementation "should" work on all devices and platforms, but there have been cases of a particular manufacturer being compatible with one platform and not the other, potentially as a result of the de-facto requirement to make a deal with each OEM separately.
+One thing to keep in mind is that the mention of any of those features does not guarantee that they'll end up in the final release of the specification, nor that any particular OEM will implement all of them:
+  - With Car and Home keys, the protocol seemingly offers support for requesting strong authentication. Apple devices ignore that parameter and authenticate anyway, although it's possible that this feature isn't implemented by anyone in practice;
+  - With Car Keys, one implementation "should" work on all devices and platforms, but there have been cases of a particular manufacturer being compatible with one platform and not the other, potentially as a result of the de facto requirement to make a deal with each OEM separately.
 
 
 ## Release date
 
 Aliro does not have an official release date, but some public sources related to CSA have reported that Aliro is targeting 2025 release.
 
-Meanwhile, starting from Spring 2024, the internal code of different OEMs had started to gain references to Aliro:
+Meanwhile, starting in Spring 2024, the internal code of different OEMs started gaining references to Aliro:
 
 - Android 15 source code gained UWB implementation;
 - Google Play Services gained references to Aliro HCE service;
-- IOS 17.5 contains Matter support headers related to Aliro lock configuration and credential provisioning;
-- IOS 18.0 Beta contains tons of referenes to Aliro, including Applet references;
-- ~~IOS might contain references to Aliro (or plain UnifiedAccess, which the Aliro is the derivative of) under the "Hydra" codename~~ (Hydra is a codename affix for symbols related to `UnifiedAccess`-based access passes).
+- iOS 17.5 contains Matter support headers related to Aliro lock configuration and credential provisioning;
+- iOS 18.0 Beta contains tons of references to Aliro, including Applet references;
 
-Considering the fact that parts of code related to Aliro have been shipped to customer devices in those cases, means that the protocol implementation is already undergoing active testing.  
-~~There's a non-zero chance of Google mentioning Aliro on Google IO in May, or Apple at WWDC in June~~ (Nope).
-
-Taking a broad guess, we could see Aliro releasing anywhen starting from Summer 2024 (as a developer preview, if specification is opened), up to Autumn 2024 (when Android 15, IOS 18 release, alongside their respective flagship devices), or Winter 2024/2025.
+Because parts of the Aliro code have already shipped to customer devices, the protocol implementation is clearly in active testing.  
 
 Considering that Aliro is intended for both residential and commercial access control, it's also possible that the residential part of the spec gets released earlier, while the access control side could be delayed to add or refine features required in those cases.
 
@@ -104,21 +100,21 @@ Matter protocol will feature direct integration with Aliro-compatible hardware. 
 
 ## NFC
 
-### ECP and PLF
+### ECP and PLA
 
-There is no information in regards to the use of Enhanced Contactless Polling or Polling Loop Filters with Aliro.  
-Considering that Apple had historically used ECP for all* express-mode-enabled passes and that Google is steamrolling PLF implementation into Android 15's NFC stack, there's a high chance that both device groups will employ the use of their respective polling augmentation technology alongside Aliro.
+There is no information regarding the use of Enhanced Contactless Polling or Polling Loop Annotations with Aliro.  
+Considering that Apple had historically used ECP for all* express-mode-enabled passes and that Google is adding PLA implementation into Android 15's NFC stack, there's a high chance that both device groups will employ the use of their respective polling augmentation technology alongside Aliro.
 
 What poses a question is whether NFC polling augmentation will fall outside the Aliro specification and become a matter of direct agreement between each hardware manufacturer and Apple and Google, or if both sides may opt to support each other's technologies or even share a common data format for ideal interoperability.
 
 
 ### Applets and Application Identifiers
 
-According tho the fresh (May) release of Google Play Services, Aliro will use two application identifiers:
+According to the fresh (May) release of Google Play Services, Aliro will use two application identifiers:
 1. Primary:  
   `A000000909ACCE5501`
 2. Secondary:  
-   `A000000909ACCE5502`
+  `A000000909ACCE5502`
 
 ```
 <?xml version="1.0" encoding="utf-8"?>
@@ -130,7 +126,7 @@ According tho the fresh (May) release of Google Play Services, Aliro will use tw
 </host-apdu-service>
 ```
 
-Those who are familiar with the `UnifiedAccess` family of NFC protocols, know that the so-similar two-app-combo is also used by:
+Those who are familiar with the `UnifiedAccess` family of NFC protocols know that the familiar two-app combo is also used by:
 - Digital Car Keys;
 - Apple Home Keys;
 - Apple Access Keys.
@@ -139,24 +135,23 @@ Where:
 - The first applet is hosted on the secure element (SE), and is responsible for storing the credential data and performing authentication.
 - The second one is hosted by the operating system (HCE), and is used for credential enrollment and/or storage of auxiliary data.
 
-What's unique about this implementation, is that this time both AID entries are declared as having an on-host implementation.
+What's unique about this implementation is that this time both AID entries are declared as having an on-host implementation.
 This could mean one of the following:
 - Aliro, unlike other `UnifiedAccess`-derivative protocols, will allow the use of HCE, perhaps with one of the following specifics:
   * There are no restrictions on how credential data is stored;
-  * Credential data must be stored at least in semi-secure location, like on the TEE;
-  * Credential data must be located in the secure/external hardware, specifics on if the secure hardware must be connected directly to radio or can access radio indirectly through a CPU + Software don't matter. StrongBox Keymaster could be an example of an implementation meeting this criteria, as it stores key data in a secure element, but cryptographic operations are performed on behalf of the operating system.   
-- ~~HCE is used by Google internally for testing purposes only. In this case, it would also mean that the cool `ACCE55` AID affixes might not be used~~ (IOS18 firmware confirms that `ACCE55` is the official AID);
+  * Credential data must be stored at least in a semi-secure location, like on the TEE;
+  * Credential data must be located in the secure/external hardware, specifics on whether the secure hardware must be connected directly to radio or can access radio indirectly through a CPU + software don't matter. StrongBox Keymaster could be an example of an implementation meeting this criterion, as it stores key data in a secure element, but cryptographic operations are performed on behalf of the operating system.   
 
-All of these theories have an equal chance of being true, considering that Aliro might sidestep some limitations similar to the ones enforced by Car Key spec in order to get much broader support, as there are still many Android devices lacking a dedicated SE, let alone an "Android Ready SE" compatible one, but there are lots that contain a TEE, which can also be used for similar purposes, even if not considered as secure, while being miles better than plain OS-level software-based implementation.  
+All of these theories have an equal chance of being true, considering that Aliro might sidestep some limitations similar to those enforced by Car Key to gain broader support, since many Android devices still lack a dedicated SE, let alone an "Android Ready SE" compatible one. Many do have a TEE, which is less secure but still much better than plain OS-level software-based implementation.  
 
-Regardless of that, SE-backed implementation will surely be an option and used by Apple. It also might be available for premium Android devices, in order to allow operation in low battery situations, but at this moment there are no clues leading to that.
+Regardless of that, SE-backed implementation will surely be an option and used by Apple. It also might be available for premium Android devices, to allow operation in low-battery situations, but at this moment there are no clues leading to that.
 
 
 ## UWB
 
-Android 15 source code features many references to Aliro in regards to the UWB specification. 
+Android 15 source code features many references to Aliro regarding the UWB specification. 
 
-[The codebase](https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Uwb/service/support_lib/src/com/google/uwb/support/aliro/) features following classes:
+[The codebase](https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Uwb/service/support_lib/src/com/google/uwb/support/aliro/) features the following classes:
 - AliroOpenRangingParams;
 - AliroParams;
 - AliroProtocolVersion;
@@ -181,7 +176,7 @@ This information serves as an additional clue to the fact that Aliro is based on
 
 ## Protocol and cryptography
 
-Thanks to the Matter GitHub repository and IOS 17.5 runtime headers, we know that the following cryptographic data will be used with the protocol:
+Thanks to the Matter GitHub repository and iOS 17.5 runtime headers, we know that the following cryptographic data will be used with the protocol:
 
 * Reader configuration request:
   ```general
@@ -212,19 +207,19 @@ To get more clues, we should draw some parallels with `UnifiedAccess` protocol:
 
 Considering that there are many common pieces with `UnifiedAccess` protocol, that's a strong indication that Aliro will have the same or slightly augmented variations of `FAST -> STANDARD -> EXCHANGE` command flow;
 
-A question remains in regards to the ownership `credentialIssuerKey` in Aliro, as it could be one of the following:
+A question remains regarding ownership of the `credentialIssuerKey` in Aliro, as it could be one of the following:
 - It will belong to the OEM, which will be responsible for generating and attesting credentials (1984);
 - It will belong to each user who is directly enrolled in a particular Matter installation and has the ability to invite other users (best-case scenario).
-- Only the designated users will be able to serve as issuers, allowing to configure if a home member is allowed to perform sharing (even better).
+- Only the designated users will be able to serve as issuers, allowing you to configure whether a home member is allowed to perform sharing (even better).
 
 When comparing to the Home Key protocol, there's also a question on how key revocation would work for evictable credentials, as HomeKey seemingly lacks the ability to remove credentials without removing the issuer, only to blocklist (suspend) a couple of credentials, because the issuer keys serve as a root of trust and credential identifiers are self-assigned based on the private key and not by the issuer.
 
 This issue would be solved if evictable or all credentials instead use a limited identifier pool, which would allow evicting a credential by removing a related identifier from all readers, thus invalidating the attestation package from being replayed.
 
 
-# IOS18 Symbols and references
+# iOS 18 Symbols and references
 
-The latest IOS18 beta release presents a tresure trove of strings, symbols, and other references to Aliro.  
+The latest iOS 18 beta release presents a treasure trove of strings, symbols, and other references to Aliro.  
 This section features a collection of all found instances, including some comments if applicable.
 
 
@@ -271,7 +266,7 @@ This section features a collection of all found instances, including some commen
 2. Aliro-based keys will also be branded as "Home Keys", potentially housing two applets under a single "pass" for UX reasons;
 3. NFC will be an alternative to (UWB + BLE)-based authentication;
 4. Access schedule feature would be meaningless for full-fledged home members, so this also indirectly implies support for key sharing.  
-Although, this doesn't confirm that sharing will be "open", as it is very likely to rely on the new HomeKit "Guest" feature. 
+Although this doesn't confirm that sharing will be "open", as it is very likely to rely on the new HomeKit "Guest" feature. 
 
 
 ### `Library/SEStorage`
@@ -331,14 +326,14 @@ Although, this doesn't confirm that sharing will be "open", as it is very likely
 > [!TIP]  
 > Memory sizes are listed in bytes.
 >
-> `PERSISTEND`- `pHeap` memory used at all times;
+> `PERSISTENT`- `pHeap` memory used at all times;
 > `CLEAR_ON_DESELECT`- `cod` memory released after the applet is deselected (partially deactivated);  
 > `CLEAR_ON_RESET` - `cor` memory released after the card is reset (fully deactivated);  
 > 
 > `PACKAGE` - memory taken by applet data and executable code;  
 > `SELECTABLE` - memory used when applet is selected;  
 > `PERSONALIZED` - memory used by each applet instance (all);  
-> `CONTAINER` - **If someone familiar with JavaCard knows what it memory type could mean, It would be great if you could chime in and give an explanation.**
+> `CONTAINER` - **If someone familiar with JavaCard knows what this memory type means, please chime in and give an explanation.**
 >
 
 
@@ -412,10 +407,10 @@ Although, this doesn't confirm that sharing will be "open", as it is very likely
 # Notes 
 
 - I take no ownership of any information presented here. Presented code snippets, if available, were taken directly from public sources referenced below; 
-- The following software was analysed on the presence of Aliro-related code.
-  * IOS 17.5 restore firmware file for iPhone 15 Pro Max:
+- The following software was analysed for the presence of Aliro-related code.
+  * iOS 17.5 restore firmware file for iPhone 15 Pro Max:
     `iPhone16,2_17.5_21F5073b_Restore.ipsw`.
-  * IOS 18.0 Beta 1 restore firmware file for iPhone 15 Pro Max:
+  * iOS 18.0 Beta 1 restore firmware file for iPhone 15 Pro Max:
     `iPhone16,2_18.0_22A5282m_Restore`.
   * Google Play Services APK files starting from February 2024:
     `com.google.android.gms_24.15.17`.    
@@ -425,8 +420,8 @@ Although, this doesn't confirm that sharing will be "open", as it is very likely
 
 # Special thanks
 
-* [@kupa22](https://github.com/kupa22) - for helping with looking into and finding IOS18 framework symbols;
-* [@vincentpeyrouse](https://github.com/vincentpeyrouse) - for being first to report on some IOS18-related discoveries (strings and JSON files), finding clues leading into `DigitalAccess.framework`;
+* [@kupa22](https://github.com/kupa22) - for helping with looking into and finding iOS 18 framework symbols;
+* [@vincentpeyrouse](https://github.com/vincentpeyrouse) - for being first to report on some iOS 18-related discoveries (strings and JSON files), finding clues leading into `DigitalAccess.framework`;
 * [@rednblkx](https://github.com/rednblkx) (and @vincentpeyrouse) for reporting on their `purpleTrust`-related findings.
 
 
@@ -443,7 +438,7 @@ Although, this doesn't confirm that sharing will be "open", as it is very likely
   - [GitHub Matter - Aliro Pull Request](https://github.com/project-chip/connectedhomeip/pull/31144/files);
   - [Android Code Search](https://cs.android.com/search?q=aliro&sq=) - contains Aliro UWB implementation;
   - [Android StrongBox Keymaster](https://source.android.com/docs/security/features/keystore);
-  - [Android Polling Loop Filters - CardEmulation, PollingFrame](https://developer.android.com/reference/android/nfc/cardemulation/package-summary);
+  - [Android Polling Loop Annotations - CardEmulation, PollingFrame](https://developer.android.com/reference/android/nfc/cardemulation/package-summary);
   - [Apple Enhanced Contactless Polling (Unofficial, detailed)](https://github.com/kormax/apple-enhanced-contactless-polling);
   - [Apple Enhanced Contactless Polling (Official, very brief)](https://register.apple.com/resources/docs/apple-pay/access/program-guide/requirements/#enhanced-contactless-polling-ecp-protocol);
   - [Apple Home Key - UnifiedAccess protocol implementation (Unofficial)](https://github.com/kormax/apple-home-key) - in-depth look at the Home Key and Unified Access protocol.
