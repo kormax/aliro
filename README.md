@@ -1,444 +1,574 @@
 # Aliro
 
 <p float="left">
- <img src="./assets/IS.THIS.REAL.webp" alt="Video depicting an Aliro credential being read" width=200px>
+ <img src="./assets/ALIRO.APPLE.webp" alt="Aliro-based Home Key settings screen with UWB configuration in Apple Wallet" width=200px>
+ <img src="./assets/ALIRO.SAMSUNG.webp" alt="Aliro-based Home Key in Samsung Wallet" width=200px>
+ <img src="./assets/ALIRO.GOOGLE.webp" alt="Aliro-based card used in Google Wallet" width=200px>
 </p>
-<sub>Please, don't freak out about the video.</sub>  
 
 > [!NOTE]  
-> Aliro protocol is under development and has a 2025 release target. No publicly known implementations are available to users yet.
-> 
-> This repository serves as a collection of all technical and non-technical information available at this moment, alongside some speculation and guessing. It has a high chance of becoming obsolete in the near future, considering that CSA might open up access to their specification.
-> 
+> This repository previously contained observations on the development of the standard. This information has been moved into [OBSERVATIONS.md](OBSERVATIONS.md).
 
+> [!WARNING]
+> The technical aspects of the protocol are still being researched and verified, so some information currently present here may be incomplete or partially incorrect.
 
 # Overview
 
-## Introduction
+Aliro is an access credential standard developed by the [Connectivity Standards Alliance](https://csa-iot.org) that lets devices present credentials over NFC or BLE + UWB to open doors or authenticate with compatible access systems.
 
-Aliro is a standardized communication protocol between access readers and user devices.
+This protocol is based on PKI, with readers and devices performing mutual authentication using public keys and certificates (currently ECDSA), also enabling offline-native credential sharing and revocation.  
+Endpoints that have recently completed mutual authentication can reuse the persistent secure context to speed up repeated authentications with symmetric cryptography.  
+To preserve privacy, device endpoints withhold identifying data until a reader is authenticated and a secure channel is established.
 
+# Commands
 
-## Development
+Aliro commands use ISO7816 APDUs over NFC and BLE and largely follow UnifiedAccess protocols such as [CCC CarKey](https://carconnectivity.org/digital-key/) and [Apple HomeKey](https://github.com/kormax/apple-home-key), but with different cryptography, command parameters, and some expanded capabilities:
 
-The standard is developed by the Connectivity Standards Alliance (CSA) - an organization responsible for the creation of Matter specification.
+| Command                     | CLA  | INS  | P1   | P2   | Command Data                          | Le                | Response Data                         | Description                                                                              |
+|-----------------------------|------|------|------|------|---------------------------------------|-------------------|---------------------------------------|------------------------------------------------------------------------------------------|
+| SELECT ALIRO PRIMARY APPLET | `00` | `A4` | `04` | `00` | `A000000909ACCE5501`                  | `00`              | BER-TLV encoded data                  | Select the primary applet to get a list of supported protocol versions and features      |
+| AUTH0                       | `80` | `80` | `00` | `00` | BER-TLV encoded data                  | [empty]           | BER-TLV encoded data                  | Attempt authentication using a cryptogram derived with HMAC-SHA256 over shared data      |
+| LOAD CERTIFICATE            | `80` | `D1` | `00` | `00` | ASN.1 encoded certificate             | [empty]           | [empty]                               | Supply a compressed reader certificate signed by the known reader group public key       |
+| AUTH1                       | `80` | `81` | `00` | `00` | BER-TLV encoded data                  | [empty]           | Encrypted BER-TLV encoded data        | Authenticate with a known public key or with a key from a supplied, verified certificate |
+| EXCHANGE                    | `80` | `C9` | `00` | `00` | Encrypted BER-TLV encoded data        | [empty]           | Encrypted BER-TLV encoded data        | Write or read data from the endpoint's mailbox memory                                    |
+| CONTROL FLOW                | `80` | `3C` | `00` | `00` | BER-TLV encoded data                  | [empty]           | [empty]                               | Notify the endpoint about the state of the transaction                                   |
+| SELECT ALIRO STEP UP APPLET | `00` | `A4` | `04` | `00` | `A000000909ACCE5502`                  | `00`              | [empty]                               | Select the step-up applet                                                                |
+| ENVELOPE                    | `00` | `C3` | `00` | `00` | BER-TLV with nested NDEF or CBOR data | [empty]           | BER-TLV with nested NDEF or CBOR data | Request attestation or revocation certificates from the endpoint                         |
+| GET RESPONSE                | `00` | `C0` | `00` | `00` | [empty]                               | [expected length] | Parts of CBOR with encrypted data     | Read leftover certificate data from the previous ENVELOPE request                        |
 
-The companies listed as members of the work group are:
-* Consumer device manufacturers:
-  - Apple;
-  - Google;
-  - Samsung;
-* Hardware component manufacturers:
-  - NXP;
-  - ST;
-  - Infineon;
-* Access control system manufacturers:
-  - HID;
-  - Allegion.
+Running these commands moves the credential-holder endpoint through the following states:
+```mermaid
+stateDiagram-v2
+  state "Deselected" as Deselected
+  state "Selected / Unauthenticated" as Unauth
+  state "Auth0 authenticated" as Auth0Auth
+  state "Auth0 skipped" as Auth0Skip
+  state "Certificate loaded" as LoadCert
+  state "Auth1 authenticated" as Auth1Auth
+  state "Step Up" as StepUp
+  state "Exchange" as Exchange
 
+  [*] --> Deselected
+  Deselected --> Unauth : Select Aliro primary applet
+  Unauth --> Auth0Auth : Auth0 (known mutual key)
+  Unauth --> Auth0Skip : Auth0 (skipped or unknown mutual key)
 
-## Features
+  Auth0Auth --> LoadCert : Load certificate
+  Auth0Auth --> Auth1Auth : Auth1 (with public key)
+  Auth0Auth --> Exchange : Exchange
+  Auth0Auth --> StepUp : Select Aliro Step Up applet
 
-The following additional features of Aliro have been mentioned in one way or another, or have been synthesized based on known technical information:
+  Auth0Skip --> LoadCert : Load certificate
+  Auth0Skip --> Auth1Auth : Auth1 (with public key)
 
-- Sharing `EvictableEndpoint`:
-  - "Offline" sharing.
-- Automatic generation of credentials for devices added into Matter home installation  `Issuer -> NonEvictableEndpoint`;
-- Limitations upon credentials:
-  - Time of the day;
-  - Day of the week;
-  - Limited use (date or count);
-  - Additional authentication requirements.
-- Cross-platform compatibility;
-- Multiple readers per installation;
-- Multiple radio technologies:
-  - NFC;
-  - BLE + UWB.
+  LoadCert --> Auth1Auth : Auth1 (with certificate)
 
-One thing to keep in mind is that the mention of any of those features does not guarantee that they'll end up in the final release of the specification, nor that any particular OEM will implement all of them:
-  - With Car and Home keys, the protocol seemingly offers support for requesting strong authentication. Apple devices ignore that parameter and authenticate anyway, although it's possible that this feature isn't implemented by anyone in practice;
-  - With Car Keys, one implementation "should" work on all devices and platforms, but there have been cases of a particular manufacturer being compatible with one platform and not the other, potentially as a result of the de facto requirement to make a deal with each OEM separately.
+  Auth1Auth --> StepUp : Select Aliro Step Up applet
+  Auth1Auth --> Exchange : Exchange
 
+  Exchange --> Exchange : Exchange
+  Exchange --> StepUp : Select Aliro Step Up applet
 
-## Release date
-
-Aliro does not have an official release date, but some public sources related to CSA have reported that Aliro is targeting 2025 release.
-
-Meanwhile, starting in Spring 2024, the internal code of different OEMs started gaining references to Aliro:
-
-- Android 15 source code gained UWB implementation;
-- Google Play Services gained references to Aliro HCE service;
-- iOS 17.5 contains Matter support headers related to Aliro lock configuration and credential provisioning;
-- iOS 18.0 Beta contains tons of references to Aliro, including Applet references;
-
-Because parts of the Aliro code have already shipped to customer devices, the protocol implementation is clearly in active testing.  
-
-Considering that Aliro is intended for both residential and commercial access control, it's also possible that the residential part of the spec gets released earlier, while the access control side could be delayed to add or refine features required in those cases.
-
-
-# Technical details
-
-## Communication modes
-
-Aliro specification covers two modes of communication between the reader and the endpoint:
-- NFC;
-- BLE + UWB.
-
-While the NFC part of the specification will be mandatory, BLE + UWB for passive entry will be optional.
-
-The standard does not specify how the reader is to communicate or integrate with the outside world, so it may use any of the following:
-* Wired: Ethernet, OSDP, Wiegand, etc.
-* Wireless: Pure BLE, WiFi, Thread, ZigBee.
-
-
-## Matter integration
-
-While Aliro specifically mentions lack of any limitations on how the reader integrates with the external world, it doesn't mean that the reverse is true.
-
-Matter protocol will feature direct integration with Aliro-compatible hardware. [First pull requests that include references to Aliro have hit the connectedhomeip repository as early as this January](https://github.com/project-chip/connectedhomeip/pull/31144/files).
-
-
-## NFC
-
-### ECP and PLA
-
-There is no information regarding the use of Enhanced Contactless Polling or Polling Loop Annotations with Aliro.  
-Considering that Apple had historically used ECP for all* express-mode-enabled passes and that Google is adding PLA implementation into Android 15's NFC stack, there's a high chance that both device groups will employ the use of their respective polling augmentation technology alongside Aliro.
-
-What poses a question is whether NFC polling augmentation will fall outside the Aliro specification and become a matter of direct agreement between each hardware manufacturer and Apple and Google, or if both sides may opt to support each other's technologies or even share a common data format for ideal interoperability.
-
-
-### Applets and Application Identifiers
-
-According to the fresh (May) release of Google Play Services, Aliro will use two application identifiers:
-1. Primary:  
-  `A000000909ACCE5501`
-2. Secondary:  
-  `A000000909ACCE5502`
-
+  StepUp --> StepUp : Envelope/Get Response
 ```
-<?xml version="1.0" encoding="utf-8"?>
-<host-apdu-service xmlns:android="http://schemas.android.com/apk/res/android" android:description="@string/aliro_hce_service_description" android:requireDeviceUnlock="false" android:requireDeviceScreenOn="false">
-    <aid-group android:category="other">
-        <aid-filter android:name="A000000909ACCE5501"/>
-        <aid-filter android:name="A000000909ACCE5502"/>
-    </aid-group>
-</host-apdu-service>
+<sub>Deselection or Control Flow is possible in all states, hence it is not displayed in the diagram</sub>
+
+## SELECT ALIRO PRIMARY APPLET
+
+This is an initial command used to select the Aliro applet and receive capability information from the device endpoint.
+
+### Command
+
+#### APDU format
+
+| Field | Value                |
+|-------|----------------------|
+| CLA   | `00`                 |
+| INS   | `A4`                 |
+| P1    | `04`                 |
+| P2    | `00`                 |
+| Lc    | `09`                 |
+| Data  | `A000000909ACCE5501` |
+| Le    | `00`                 |
+
+### Response
+
+#### APDU format
+
+| Field | Value                        |
+|-------|------------------------------|
+| Data  | BER-TLV encoded FCI template |
+| SW1   | `90`                         |
+| SW2   | `00`                         |
+
+#### Data format
+
+Data is formatted as a BER-TLV object:
+
+```text
+6F File Control Information (FCI) Template
+  84 Dedicated File (DF) Name
+    A000000909ACCE5501
+  A5 File Control Information (FCI) Proprietary Template
+    80 Medium type
+      0000
+    5C Supported protocol versions
+      01000009
+    7F66 Additional capabilities
+      02 Additional capability tag
+        0000
 ```
 
-Those who are familiar with the `UnifiedAccess` family of NFC protocols know that the familiar two-app combo is also used by:
-- Digital Car Keys;
-- Apple Home Keys;
-- Apple Access Keys.
+- Tag `5C` is an array of 2-byte values indicating supported protocol versions:
+  - `0100` → 1.0;
+  - `0009` → 0.9.
+- Tag `80` lists the medium type; mobile devices use value `0000`;
+- Tag `7F66` lists additional capabilities declared by the device endpoint manufacturer as a list of `02` tags. 
 
-Where:
-- The first applet is hosted on the secure element (SE), and is responsible for storing the credential data and performing authentication.
-- The second one is hosted by the operating system (HCE), and is used for credential enrollment and/or storage of auxiliary data.
+The full FCI template is used as input for cryptographic operations in later steps to ensure the reader is informed about the device's full capability set.
 
-What's unique about this implementation is that this time both AID entries are declared as having an on-host implementation.
-This could mean one of the following:
-- Aliro, unlike other `UnifiedAccess`-derivative protocols, will allow the use of HCE, perhaps with one of the following specifics:
-  * There are no restrictions on how credential data is stored;
-  * Credential data must be stored at least in a semi-secure location, like on the TEE;
-  * Credential data must be located in the secure/external hardware, specifics on whether the secure hardware must be connected directly to radio or can access radio indirectly through a CPU + software don't matter. StrongBox Keymaster could be an example of an implementation meeting this criterion, as it stores key data in a secure element, but cryptographic operations are performed on behalf of the operating system.   
+## AUTH0
 
-All of these theories have an equal chance of being true, considering that Aliro might sidestep some limitations similar to those enforced by Car Key to gain broader support, since many Android devices still lack a dedicated SE, let alone an "Android Ready SE" compatible one. Many do have a TEE, which is less secure but still much better than plain OS-level software-based implementation.  
+This command is used to exchange ephemeral keys between the device and the reader, with an optional ability to expedite authentication using persistent context.
 
-Regardless of that, SE-backed implementation will surely be an option and used by Apple. It also might be available for premium Android devices, to allow operation in low-battery situations, but at this moment there are no clues leading to that.
+### Command
 
+#### APDU format
 
-## UWB
+| Field | Value                   |
+|-------|-------------------------|
+| CLA   | `80`                    |
+| INS   | `80`                    |
+| P1    | `00`                    |
+| P2    | `00`                    |
+| Lc    | length(data)            |
+| Data  | BER-TLV encoded request |
+| Le    | [none]                  |
 
-Android 15 source code features many references to Aliro regarding the UWB specification. 
+#### Data format
 
-[The codebase](https://cs.android.com/android/platform/superproject/main/+/main:packages/modules/Uwb/service/support_lib/src/com/google/uwb/support/aliro/) features the following classes:
-- AliroOpenRangingParams;
-- AliroParams;
-- AliroProtocolVersion;
-- AliroPulseShapeCombo;
-- AliroRangingError;
-- AliroRangingReconfiguredParams;
-- AliroRangingStartedParams;
-- AliroRangingStoppedParams;
-- AliroSpecificationParams;
-- AliroStartRangingParams.
+Data is formatted as an array of BER-TLV values:
 
-Going to the parent directory, we see a `ccc` directory, dedicated to Car Connectivity Consortium's Digital Car Key UWB implementation. The directory contains:
-- CccOpenRangingParams
-- CccParams
-- ... We can stop at this point;
-
-As we can see, the directory structure and even the class name patterns are exactly the same. The file contents are different due to different class and variable names, but no substantial differences have been found.
-
-
-This information serves as an additional clue to the fact that Aliro is based on the `UnifiedAccess` family of protocols.
-
-
-## Protocol and cryptography
-
-Thanks to the Matter GitHub repository and iOS 17.5 runtime headers, we know that the following cryptographic data will be used with the protocol:
-
-* Reader configuration request:
-  ```general
-   request struct SetAliroReaderConfigRequest {
-      octet_string<32> signingKey = 0;
-      octet_string<65> verificationKey = 1;
-      octet_string<16> groupIdentifier = 2;
-      optional octet_string<16> groupResolvingKey = 3;
-  }
-  ```
-* Credential data size:
-  ```c++
-   static constexpr uint8_t DOOR_LOCK_ALIRO_CREDENTIAL_SIZE = 65;
-   ...
-    case CredentialTypeEnum::kAliroCredentialIssuerKey:
-    case CredentialTypeEnum::kAliroEvictableEndpointKey:
-    case CredentialTypeEnum::kAliroNonEvictableEndpointKey:
-        minLen = maxLen = DOOR_LOCK_ALIRO_CREDENTIAL_SIZE;
-  ```
-
-To get more clues, we should draw some parallels with `UnifiedAccess` protocol:
-- `signingKey` can be immediately recognized as a direct counterpart of the `SECP256R1` `privateKey`, used by the reader to prove to the endpoint that transaction ephemeral data was generated by a trusted reader. It should also be a 256-bit long private `SECP256XX`, key;
-- `verificationKey` seems new. It's 65 bytes long, which is the number of bytes that a `EC` `SECP256**` public key takes. This key is unique in this protocol. Taking a guess, a private portion of that key could be injected into all credentials, so that an endpoint could also prove that its ephemeral data is to be trusted without leaking its identity, even before the final signature which includes identifying data is made by the device over the encrypted channel;
-- `groupIdentifier` is not a cryptographic key and has the same meaning as in `UnifiedAccess`, used for the resolution of which particular credential is to be used;
-- `groupResolvingKey` could be related to BLE identity resolving key `IRK`;
-- `credentialIssuerKey` matches the key of the same name used in Home Key protocol, but in that case that was a 64-byte-long `ED25519` public key. In this case, 65 bytes could also hold an `ED25519` (with 1 byte of slack) or a `SECP256**` key;
-- `endpointKey` would contain a public `SECP256**` key of each enrolled endpoint, regardless of it being evictable or not.
-
-Considering that there are many common pieces with `UnifiedAccess` protocol, that's a strong indication that Aliro will have the same or slightly augmented variations of `FAST -> STANDARD -> EXCHANGE` command flow;
-
-A question remains regarding ownership of the `credentialIssuerKey` in Aliro, as it could be one of the following:
-- It will belong to the OEM, which will be responsible for generating and attesting credentials (1984);
-- It will belong to each user who is directly enrolled in a particular Matter installation and has the ability to invite other users (best-case scenario).
-- Only the designated users will be able to serve as issuers, allowing you to configure whether a home member is allowed to perform sharing (even better).
-
-When comparing to the Home Key protocol, there's also a question on how key revocation would work for evictable credentials, as HomeKey seemingly lacks the ability to remove credentials without removing the issuer, only to blocklist (suspend) a couple of credentials, because the issuer keys serve as a root of trust and credential identifiers are self-assigned based on the private key and not by the issuer.
-
-This issue would be solved if evictable or all credentials instead use a limited identifier pool, which would allow evicting a credential by removing a related identifier from all readers, thus invalidating the attestation package from being replayed.
-
-
-# iOS 18 Symbols and references
-
-The latest iOS 18 beta release presents a treasure trove of strings, symbols, and other references to Aliro.  
-This section features a collection of all found instances, including some comments if applicable.
-
-
-## Strings
-
-### `PrivateFrameworks/Home.framework`
-
-#### `HFSensitiveStrings-WalletKeyUWB`
-
-```json
-{
-    "WalletKeyUncertified": "This accessory has not been certified to work with HomeKit so some features may not be available such as Approach to Unlock or Tap to Unlock.",
-    "WalletKeyUWBApproachAngle_Left": "Left",
-    "WalletKeyUWB_ApproachAngleView_Title": "Approach Direction",
-    "HFAccessoryDetails_Lock_Approach_Angle_Footer": "Customize this lock to only detect an approach from certain directions. This will help prevent the door unlocking accidentally.",
-    "WalletKeyUWBApproachAngle_Description": "Customize this lock to only detect an approach from certain directions. This will help prevent the door unlocking accidentally.",
-    "WalletKeyUWBApproachAngle_Right": "Right",
-    "WalletKeyUWBApproachAngle_Center": "Front"
-}
+```text
+41 Transaction flag
+  01
+42 Transaction code
+  01
+5C Chosen protocol version
+  0100
+87 Reader ephemeral public key
+  0461C11D6A105738164DFEBE0565CF68E22AD2AF76537F1131A7CB44C6E6FEB4836D20A2F38FAFB9943BC81F22F5855C07D45C2797D82F1888D7976F553C5D41C3
+4C Transaction identifier (Transaction nonce)
+  44945BB788A4B6A9BE7B72111398E646
+4D Reader identifier (Group Identifier + Reader Instance Identifier)
+  000102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F
 ```
 
-1. Aliro-based keys will either not be generated if no certified devices are found in your home, or Apple was kind enough to warn people that some of their locks won't work with "express mode" like functionality if the manufacturer didn't talk to the "right" people;
-2. You will be able to configure UWB approach direction that triggers an unlock.
+- Tag `41` encodes transaction flags:
+  - `00` Skip FAST authentication, proceeding to STANDARD;
+  - `01` Attempt FAST authentication;
+- Tag `42` encodes transaction code or action:
+  - `00` - Unlock;
+  - `01` - Lock.
+- Tag `87` contains uncompressed reader ephemeral key;
+- Tag `4C` holds a transaction identifier, which serves as a per-transaction nonce;
+- Tag `4D` contains the reader identifier, which consists of the reader group identifier (first 16 bytes) and the reader instance identifier (last 16 bytes).
 
+### Response
 
-### `PrivateFrameworks/PassKit.framework`
+#### APDU format
 
-#### `HomeKitUWB`
+| Field | Value                |
+|-------|----------------------|
+| Data  | BER-TLV encoded data |
+| SW1   | `90`                 |
+| SW2   | `00`                 |
 
-```json
-{
-    "UWB_UPDATE_FAILED_BODY_UNLOCK_ONLY_HOME_KEY": "Unlock on Approach uses Ultra Wideband technology. You will not be able to lock & unlock your door until your iPhone has been updated.",
-    "DASHBOARD_HOME_ACCESS_RESTRICTED_TITLE": "Access Restricted",
-    "DASHBOARD_HOME_ACCESS_RESTRICTED_MESSAGE": "Check your scheduled access times to see when you can use this key.",
-    "HOME_KEY_UNLOCK_ON_APPROACH_TITLE": "Unlock on Approach",
-    "KNOWN_PROHIBITED_LOCATION_BODY_UNLOCK_ONLY_HOME_KEY": "Unlock on Approach uses Ultra Wideband technology, which is prohibited in this area. Hold iPhone near reader to lock & unlock or move to another location.",
-    "BLUETOOTH_DISABLED_BODY_UNLOCK_ONLY_HOME_KEY": "You cannot use Unlock on Approach while Bluetooth is off. Hold iPhone near reader to lock & unlock.",
-    "PASS_DETAILS_SHOW_ACCESS_SCHEDULE_TITLE": "Access Schedule",
-    "AIRPLANE_MODE_ENABLED_BODY_UNLOCK_ONLY_HOME_KEY": "You cannot use Unlock on Approach while Airplane Mode is on. Hold iPhone near reader to lock & unlock."
-}
+#### Data format
+
+Data is formatted as an array of BER-TLV values:
+
+```text
+86 Device ephemeral public key
+  04193AF7945D2125C89B49C95E10AD2CD6EC69D336A24F723E70ECA6B66FD32C394E1599BF8CC4D80459194D96B509DB80432D98F034732D944D77E97E82ADAE9C
+9D Device cryptogram
+  70DF3315AEF4B219F814C0087F455B09A6F51F28870308447711525C458FB8907DD43A722911E636263988E18C6EDCA6E09245288947388BAA3C8E416B7FCA82
 ```
 
-1. Aliro-based keys will support Access Schedules;
-2. Aliro-based keys will also be branded as "Home Keys", potentially housing two applets under a single "pass" for UX reasons;
-3. NFC will be an alternative to (UWB + BLE)-based authentication;
-4. Access schedule feature would be meaningless for full-fledged home members, so this also indirectly implies support for key sharing.  
-Although this doesn't confirm that sharing will be "open", as it is very likely to rely on the new HomeKit "Guest" feature. 
+- Tag `86` contains uncompressed device ephemeral key;
+- Tag `9D` is present only if FAST authentication flow was indicated in request tag `41` and contains a cryptogram generated with HMAC-SHA256 over the context established with this reader during previous communication sessions. In case this context is lost, or it is a first authentication attempt, the device returns bogus data here to preserve privacy.
 
+> [!NOTE]  
+> Specifics on cryptogram generation and secure context establishment will be provided later
 
-### `Library/SEStorage`
+## LOAD CERTIFICATE
 
-#### `appletMID`
+In installations with multiple reader systems, each reader sub-group may be provisioned with a custom key signed by a master reader group key. This command lets the reader provide the device endpoint with a certificate to enable use of a delegated key.
 
-```json
-{
-  "COPERNICUSALIRO": {
-      "instance": [
-          "A000000909ACCE5501"
-      ],
-      "primary": [
-          "A000000704D011500000000004000000"
-      ],
-      "container": [
-          "A000000704D011500000000001000000"
-      ],
-      "isSystemApplet": false
-  },
-}
+### Command
+
+#### APDU format
+
+| Field | Value                                        |
+|-------|----------------------------------------------|
+| CLA   | `80`                                         |
+| INS   | `D1`                                         |
+| P1    | `00`                                         |
+| P2    | `00`                                         |
+| Lc    | length(data)                                 |
+| Data  | ASN.1 encoded certificate in compressed form |
+| Le    | [none]                                       |
+
+#### Compressed certificate format
+
+Data is formatted as an ASN.1 object:
+
+```text
+30 PKI Message
+  04 Profile marker
+    0000
+  30 PKI Body
+    80 Serial number
+        03
+    81 Issuer
+        497373756572
+    82 Not before
+        3235303130313030303030305A
+    83 Not after
+        3330303130313030303030305A
+    84 Subject
+        5375626A656374
+    85 Public Key
+        0491C9773144B1A677FB6E5C1F8104641452FB15D786CFE4E463A90BB4E5ACF0131FEED4901D0D8DBE8120A3A81EA97640E6C8A90754681E77E6AF850CB7BEDF36
+    86 Signature
+        3046022100F19D0B011EA957147ADDE8D2C9560114268EA94F6838852AD3D719CBB9F2B086022100DB2B160A8C444C49B212679D7948C66034D215CD1BE70CEC25CB99511F05AAB5
 ```
 
-1. As expected, Aliro is based on `UnifiedAccess` protocol, and Apple implementation uses the same `Copernicus` applet;
-2. `A000000909ACCE55` is the AID prefix used by Aliro. 
+For signature validation, the certificate is decompressed into an X.509 DER form by assigning tags to fields in the following fashion:
+- serialNumber: `80`;
+- issuer:
+  - commonName: `81`.
+- validity:
+  - notBefore: `82`;
+  - notAfter: `83`.
+- subject:
+  - commonName: `84`.
+- subjectPublicKeyInfo: `85`;
+- signature: `86`.
 
+### Response
 
-#### `memoryUsages`
+#### APDU format
 
-```json
-{
-  "COPERNICUSALIRO": {
-    "selectableMemory": {
-        "cod": 17, "cor": 2, "usedIndices": 26, "pHeap": 1038
-    },
-    "packageMemory": {
-        "cod": 0, "cor": 0, "usedIndices": 63, "pHeap": 56972
-    },
-    "pids": [
-        "A000000704EF00010000",
-        "A000000704D011500000000004000000"
-    ],
-    "personalizedMemory": {
-        "cod": 4515, "cor": 35, "usedIndices": 11, "pHeap": 352
-    },
-    "containerMemory": {
-        "cod": 2080, "cor": 74, "usedIndices": 52, "pHeap": 1088
-    },
-    "policy": 0
-  }
-}
+| Field | Value  |
+|-------|--------|
+| Data  | [none] |
+| SW1   | `90`   |
+| SW2   | `00`   |
+
+> [!NOTE]  
+> Specifics on certificate generation/validation/compression/decompression will be provided later
+
+## AUTH1
+
+Reader generates a signature over the data exchanged previously and presents it to the device.  
+In case of a successful verification, a secure context is established between the reader and the device, and the device returns an encrypted response containing its own signature over the common data.
+
+### Command
+
+#### APDU format
+
+| Field | Value                   |
+|-------|-------------------------|
+| CLA   | `80`                    |
+| INS   | `81`                    |
+| P1    | `00`                    |
+| P2    | `00`                    |
+| Lc    | length(data)            |
+| Data  | BER-TLV encoded request |
+| Le    | [none]                  |
+
+#### Data format
+
+Data is formatted as an array of BER-TLV values:
+
+```text
+41 Transaction flag
+  01
+9E Signature
+  12F977A7E2977662F4E0689A677FFAD4500304D23F8FCF6D106014BCFEF54F92C87944950335583C2C37E6C452729D13806BBAC036E3EECC3EACBD7C920E53A1
 ```
 
-1. `A000000704` seems to be a RID used by Apple;
-2. Copernicus applet seems to be at least ~57KB big.
+- Tag `41` encodes transaction flags:
+  - `00` Endpoint identifier will be returned in response;
+  - `01` Endpoint Public Key will be returned in response.
+- Tag `9E` contains a signature over the common transaction data.
 
-> [!TIP]  
-> Memory sizes are listed in bytes.
->
-> `PERSISTENT`- `pHeap` memory used at all times;
-> `CLEAR_ON_DESELECT`- `cod` memory released after the applet is deselected (partially deactivated);  
-> `CLEAR_ON_RESET` - `cor` memory released after the card is reset (fully deactivated);  
-> 
-> `PACKAGE` - memory taken by applet data and executable code;  
-> `SELECTABLE` - memory used when applet is selected;  
-> `PERSONALIZED` - memory used by each applet instance (all);  
-> `CONTAINER` - **If someone familiar with JavaCard knows what this memory type means, please chime in and give an explanation.**
->
+> [!NOTE]  
+> Specifics on signature generation/validation will be provided later
+
+Based on the exchanged data, a secure context is established between the device and the reader.
+
+> [!NOTE]  
+> Specifics on secure context key derivation and decryption/encryption will be provided later
+
+### Response
+
+#### APDU format
+
+| Field | Value                  |
+|-------|------------------------|
+| Data  | Encrypted BER-TLV data |
+| SW1   | `90`                   |
+| SW2   | `00`                   |
+
+#### Data format
+
+Data is formatted as an array of BER-TLV values:
+
+```text
+4E Device identifier
+  0001020304050607
+5A Device long-term public key
+  04A6A168F80FBEBBFAB658B788878C430646495F8CB0B7D2FC544C543ABA60F3BAD0B9F842190A0E7B351A06818A5A8BA4AEAEBEC192CD5CC3FD555E7008F0922A
+9E Device signature
+  27C1B735028B66DDF80C03E0629FF6A20192725CF4501E19DC95BD2DE94CCDF80D481BD603E01568F5977F67AD5203D482F237E64E6E5899B39C1F529054D1BB
+5E Medium identifier
+  0000
+91 Credential issuance date
+  323032352D30382D30315430313A30303A30305A
+```
+
+- Tag `4E` contains part of the device identifier; it is only sent if standard authentication is attempted.
+- Tag `5A` contains the long-term device public key; it is only sent if fast authentication was attempted.
+- Tag `9E` contains a signature over the common transaction data;
+- Tag `5E` may contain an identifier for the credential medium;
+- Tag `91` contains the credential issuance date.
+
+## EXCHANGE
+
+Using the secure channel established in AUTH0 or AUTH1, the reader may read or write arbitrary data to the endpoint's mailbox.
+
+### Command
+
+#### APDU format
+
+| Field | Value                             |
+|-------|-----------------------------------|
+| CLA   | `80`                              |
+| INS   | `C9`                              |
+| P1    | `00`                              |
+| P2    | `00`                              |
+| Lc    | length(data)                      |
+| Data  | Encrypted BER-TLV encoded request |
+| Le    | [none]                            |
+
+#### Data format
+
+Data sent by the reader contains a request object that describes a list of operations to perform with a mailbox:
+
+- Tag `87` - read data, consisting of 4 bytes and returning [LENGTH] bytes:
+  - OFFSET_HI;
+  - OFFSET_LO;
+  - LENGTH_HI;
+  - LENGTH_LO.
+- Tag `8A` - write data, consisting of 2 + length(data) bytes and returning 1 byte:
+  - OFFSET_HI;
+  - OFFSET_LO;
+  - [data].
+- Tag `95` - set data, which sets all bytes in the range to the given value; consists of 5 bytes and returns 1 byte:
+  - OFFSET_HI;
+  - OFFSET_LO;
+  - LENGTH_HI;
+  - LENGTH_LO;
+  - SET_TO_VALUE.
+- Tag `97` - indicates whether this is the last command in the atomic session:
+  - `01`: last command;
+  - `00`: more commands pending.
+
+### Response
+
+#### APDU format
+
+| Field | Value                  |
+|-------|------------------------|
+| Data  | Encrypted BER-TLV data |
+| SW1   | `90`                   |
+| SW2   | `00`                   |
+
+When decrypted, the response starts with a 2-byte length field for the encrypted payload, followed by operation results and a trailing status word.
+
+## CONTROL FLOW
+
+This command allows a reader to notify the device about the state or result of the transaction for UX purposes.
+
+### Command
+
+#### APDU format
+
+| Field | Value                   |
+|-------|-------------------------|
+| CLA   | `80`                    |
+| INS   | `3C`                    |
+| P1    | `00`                    |
+| P2    | `00`                    |
+| Lc    | length(data)            |
+| Data  | BER-TLV encoded request |
+| Le    | [none]                  |
+
+#### Data format
+
+Data is formatted as an array of BER-TLV values:
+
+```text
+41 Transaction flag
+  01
+42 Transaction code
+  01
+43 Status
+  01
+```
+
+Tags `41` and `42` mirror the meaning of the same tags in AUTH0 and AUTH1. Tag `43` is optional and provides additional information to the device.
+
+### Response
+
+#### APDU format
+
+| Field | Value  |
+|-------|--------|
+| Data  | [none] |
+| SW1   | `90`   |
+| SW2   | `00`   |
+
+## SELECT ALIRO STEP UP APPLET
+
+This command is used after the primary flow has completed in order to retrieve attestation or revocation certificates from the device.
+
+### Command
+
+#### APDU format
+
+| Field | Value                |
+|-------|----------------------|
+| CLA   | `00`                 |
+| INS   | `A4`                 |
+| P1    | `04`                 |
+| P2    | `00`                 |
+| Lc    | `09`                 |
+| Data  | `A000000909ACCE5502` |
+| Le    | `00`                 |
+
+### Response
+
+#### APDU format
+
+| Field | Value                        |
+|-------|------------------------------|
+| Data  | BER-TLV encoded FCI template |
+| SW1   | `90`                         |
+| SW2   | `00`                         |
+
+FCI template value is identical to the one returned by the SELECT ALIRO PRIMARY APPLET command.
+
+## ENVELOPE
+
+This command is used by the reader to request attestation and revocation certificates from the device using the established secure channel.
+
+### Command
+
+#### APDU format
+
+| Field | Value                                 |
+|-------|---------------------------------------|
+| CLA   | `00`                                  |
+| INS   | `C3`                                  |
+| P1    | `00`                                  |
+| P2    | `00`                                  |
+| Lc    | length(data)                          |
+| Data  | BER-TLV with nested NDEF or CBOR data |
+| Le    | `00`                                  |
+
+> [!NOTE]  
+> Request data format requires further investigation and will be provided later
+
+### Response
+
+#### APDU format
+
+| Field | Value                             |
+|-------|-----------------------------------|
+| Data  | Parts of CBOR with encrypted data |
+| SW1   | `90`                              |
+| SW2   | `00`                              |
+
+> [!NOTE]  
+> Specifics on the decryption/encryption of the certificate data will be provided later
+
+## GET RESPONSE
+
+If a response to ENVELOPE could not fit all the certificate data, this command is used repeatedly until everything is returned.
+
+### Command
+
+#### APDU format
+
+| Field | Value             |
+|-------|-------------------|
+| CLA   | `00`              |
+| INS   | `C0`              |
+| P1    | `00`              |
+| P2    | `00`              |
+| Lc    | `00`              |
+| Data  | [none]            |
+| Le    | [expected length] |
+
+### Response
+
+#### APDU format
+
+| Field | Value                             |
+|-------|-----------------------------------|
+| Data  | Parts of CBOR with encrypted data |
+| SW1   | `90`                              |
+| SW2   | `00`                              |
 
 
-## Symbols
+# Extras
 
-### `PassKit.framework/PassKitCore`
+## Protocol versions
 
-* `PKPaymentApplicationType`:
-  * `Aliro`;
-* `PKAuxiliaryCapability`:
-  * `HydraAliroEnabled`;
-  * `HydraAliroEnabledKey`;
-* `PKPassAuxiliaryCapabilitySignatureAliro`:
-  * `HomeKeyCreationMetadata`;
-  * `HydraKeyCreationMetadata`.
-* `ptaAliro`;
-* `signatureAliroHydra`;
-* `signatureAliroHome`;
-* `aliroHome`;
-* `readerGroupPublicKey`;
-* `aliroGroupResolvingKeys`;
-* `purpleTrustAirAliroAppletType`;
-* `appletTypePurpleTrustAirAliro`;
-* `createAliroHomeKey(seid, readerIdentifier, readerPublicKey, homeIdentifier)`;
-* `createAliroHydraKey(seid, serverParameters)`;
-* `PKSharingMessageFormatAppleHomeKeyKey`.
+Currently, two protocol versions have been observed in the wild:
+- `0.9` - Apple/Google Wallet;
+- `1.0` - Samsung Wallet.
 
-1. `Hydra` is a codename for `UnifiedAccess` - based access passes that are not home keys;
-2. `Home` version of Aliro credentials will be provisioned locally on a device;
-3. `Hydra` version of Aliro credentials will be generated with a participation of a server (which means that dues $$$ will be paid by those who are planning on using Aliro for general-use access);
-4. It seems like old Home Keys were intended to be shareable (or related symbols are a stub used for `silent` sharing);
-5. As already confirmed by Matter source code, the same cryptographic primitives will be used as in regular `UnifiedAccess` (apart from the new `verificationKey`, which is strangely missing here).
+The differences between the versions are yet unknown; they are suspected to differ in the command formats for EXCHANGE and SELECT STEP UP/ENVELOPE.
 
+## Enhanced Contactless Polling
 
-### `DigitalAccess.framework/DigitalAccess`
+To enable use of the "Express Mode" feature with Apple devices, the reader has to send a [TCI value that matches the pass](https://web.archive.org/web/20250405102423/https://developers.google.com/wallet/access/multi-family-key/guides/express-mode).  
+While the value may be unique for general access installations, Matter-based Aliro locks use a TCI value of `204220`.
 
-* `getAliroSupportedProtocolVersions`;
-* `updateAliroCredentialDocumentStatus(seid, keyIdentifier, accessDocumentPresent, accessDocumentSignedTimestamp, revocationDocumentPresent, revocationDocumentSignedTimestamp)`;
+For Home installations where both HomeKit and Matter locks are present, the Aliro applet co-resides with the HomeKey applet inside the same pass.  
+At the same time, the Aliro applet is not available when express mode is triggered with the HomeKey TCI `021100`, and the HomeKey applet is unavailable when the pass is triggered with the Aliro TCI `204220`.
 
-1. Aliro's attestation packages will seemingly be called `accessDocument`, as they could also be `signed`;
-2. Presence of `revocationDocument` and `seid` in parameters could mean that Aliro is using secure element for storage of attestation packages. 
-3. Considering that this framework contains many references to `sharing` and `attestation`, but no references to `purpleTrust`, could mean that the latter has nothing to do with attestations and something to do with crypto key storage instead.
+Similar to HomeKey, the last 8 bytes of the ECP frame must contain the reader group identifier so that the device can auto-present the pass when TRA is active or express mode is disabled.
 
+## Polling Loop Annotations
 
-### `Home.framework/Home`
+To support automatic credential use on newer Android devices, compatible readers have to broadcast appropriate [Polling Loop Annotations](https://web.archive.org/web/20250405102423/https://developers.google.com/wallet/access/multi-family-key/guides/express-mode).
 
-* `supportsUWBUnlock`;
-* `setExpressSettingsAuthData(enableUWB, enableNFCExpress)`;
-* `containsWalletKeyUWBAccessory`;
-* `accessoriesSupportingUWBUnlock`;
-
-1. Aliro Home keys are also referenced as "UWB Home Keys".
-
-
-### `HomeKitMatter.framework/HomeKitMatter`
-
-* `doorLockFeatureMapSupportsAliro`:
-  * `BLEUWB`;
-  * `Provisioning`;
-* `readAttributeAliro`:
-  * `ReaderVerificationKey`;
-  * `ReaderGroupSubIdentifier`;
-  * `GroupResolvingKey`;
-  * `ReaderGroupIdentifier`;
-
-1. Aliro BLE + UWB feature is optional;
-2. Aliro locks might have "group sub-identifiers";
-3. `verificationKey` is only referenced here, and could be used as a "privacy" key injected into all credentials, but it's not referenced anywhere else.  
-
-
-# Notes 
-
-- I take no ownership of any information presented here. Presented code snippets, if available, were taken directly from public sources referenced below; 
-- The following software was analysed for the presence of Aliro-related code.
-  * iOS 17.5 restore firmware file for iPhone 15 Pro Max:
-    `iPhone16,2_17.5_21F5073b_Restore.ipsw`.
-  * iOS 18.0 Beta 1 restore firmware file for iPhone 15 Pro Max:
-    `iPhone16,2_18.0_22A5282m_Restore`.
-  * Google Play Services APK files starting from February 2024:
-    `com.google.android.gms_24.15.17`.    
-- The term "OEM" is used exclusively here to refer to consumer device manufacturers, such as Apple, Google, Samsung, etc;
-- If you find any typos, mistakes, or have additional info to share, feel free to create a PR or raise an issue.
-
-
-# Special thanks
-
-* [@kupa22](https://github.com/kupa22) - for helping with looking into and finding iOS 18 framework symbols;
-* [@vincentpeyrouse](https://github.com/vincentpeyrouse) - for being first to report on some iOS 18-related discoveries (strings and JSON files), finding clues leading into `DigitalAccess.framework`;
-* [@rednblkx](https://github.com/rednblkx) (and @vincentpeyrouse) for reporting on their `purpleTrust`-related findings.
-
+Considering that Android's Observe Mode feature is compatible with readers that use any annotation format, Samsung and Google Wallet may piggyback on existing formats like ECP, or use a custom one for readers that are Android-only.
 
 # References
 
-* General 
-  - [CSA Aliro](https://csa-iot.org/all-solutions/aliro/) - landing page providing a general overview of the standard without any technical specifics.
-  - [CES - Aliro Podcast](https://securityinfowatch.podbean.com/e/diving-into-csa-s-new-access-control-standard-at-ces-2024/);
-  - [Aliro Executive Overview](https://csa-iot.org/wp-content/uploads/2024/03/Aliro-Executive-Overview.pdf);
-  - [Android Ready SE Alliance](https://developers.google.com/android/security/android-ready-se);
-  - [Aliro - Telink](https://www.telink-semi.cn/blog/Aliro);
-* Technical resources:
-  - [GitHub Matter Repository](https://github.com/project-chip/connectedhomeip) - contains snippets of code related to Aliro;
-  - [GitHub Matter - Aliro Pull Request](https://github.com/project-chip/connectedhomeip/pull/31144/files);
-  - [Android Code Search](https://cs.android.com/search?q=aliro&sq=) - contains Aliro UWB implementation;
-  - [Android StrongBox Keymaster](https://source.android.com/docs/security/features/keystore);
-  - [Android Polling Loop Annotations - CardEmulation, PollingFrame](https://developer.android.com/reference/android/nfc/cardemulation/package-summary);
-  - [Apple Enhanced Contactless Polling (Unofficial, detailed)](https://github.com/kormax/apple-enhanced-contactless-polling);
-  - [Apple Enhanced Contactless Polling (Official, very brief)](https://register.apple.com/resources/docs/apple-pay/access/program-guide/requirements/#enhanced-contactless-polling-ecp-protocol);
-  - [Apple Home Key - UnifiedAccess protocol implementation (Unofficial)](https://github.com/kormax/apple-home-key) - in-depth look at the Home Key and Unified Access protocol.
+* General information:
+  - [Connectivity Standards Alliance - Aliro](https://csa-iot.org/all-solutions/aliro/);
+  - [Apple Business Register - Apple Wallet Access Program](https://register.apple.com/resources/docs/apple-pay/access/program-guide/overview/access-passes/);
+  - [Google - Express Mode For an Enhanced User Experience](https://web.archive.org/web/20250405102423/https://developers.google.com/wallet/access/multi-family-key/guides/express-mode);
+  - [Samsung - Door Locks on SmartThings x Samsung Wallet](https://developer.samsung.com/conference/sdc24/sessions/door-locks-on-smartthings-x-samsung-wallet).
+* Researched Wallet Applications & system modules:
+  - [Samsung Wallet](https://play.google.com/store/apps/details?id=com.samsung.android.spay);
+  - [Samsung Digital Key Services](https://www.apkmirror.com/apk/samsung-electronics-co-ltd/samsung-pass-3/);
+  - [Google Wallet](https://play.google.com/store/apps/details?id=com.google.android.apps.walletnfcrel);
+  - [Google Play Services](https://play.google.com/store/apps/details?id=com.google.android.gms).
