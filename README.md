@@ -678,6 +678,69 @@ endpoint_public_key.verify(
 )
 ```
 
+#### Persistent key derivation
+
+After AUTH1 response decryption and signature verification succeed, the endpoint persistent key is derived from the AUTH1 intermediate key and stored for subsequent AUTH0 FAST attempts.
+
+| Element                  | Value                                                   | Length (bytes) | Notes                                                     |
+|--------------------------|---------------------------------------------------------|----------------|-----------------------------------------------------------|
+| Reader long-term key X   | `reader_public_key_x`                                   | `32`           | X coordinate                                              |
+| Domain separator         | `"Persistent**"`                                        | `12`           | ASCII context label                                       |
+| Reader identifier        | `reader_group_identifier + reader_instance_identifier`  | `32`           | Group + instance identifier                               |
+| Transport type           | `transport_type`                                        | `1`            | NFC/contactless (`0x5E`)                                  |
+| Protocol version         | `BerTLV(0x5C, protocol_version)`                        | `4`            | Encoded TLV (`5C 02 vv vv`) for selected protocol version |
+| Reader ephemeral key X   | `reader_ephemeral_public_key_x`                         | `32`           | X coordinate                                              |
+| Transaction identifier   | `transaction_identifier`                                | `16`           | Per-transaction nonce                                     |
+| Transaction params       | `transaction_flags + transaction_code`                  | `2`            | AUTH flags + operation                                    |
+| FCI data                 | `fci_proprietary_template`                              | `variable`     | FCI proprietary template bytes                            |
+| Endpoint long-term key X | `endpoint_public_key_x`                                 | `32`           | X coordinate                                              |
+
+Persistent key material is derived with HKDF-SHA256 using:
+* AUTH1 intermediate key (`derived_key`) as IKM
+* Serialized shared data as salt
+* Endpoint ephemeral key X as info.
+
+If AUTH1 is not run again for a given endpoint, that endpoint's stored persistent key remains unchanged.
+
+Example (Python pseudocode):
+
+```python
+from pseudocode import BerTLV, to_bytes
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+
+def hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=length,
+        salt=to_bytes(salt),
+        info=to_bytes(info),
+    ).derive(ikm)
+
+
+shared_data = to_bytes([
+    reader_public_key_x,
+    "Persistent**",
+    reader_group_identifier + reader_instance_identifier,
+    transport_type,
+    BerTLV(0x5C, value=protocol_version),
+    reader_ephemeral_public_key_x,
+    transaction_identifier,
+    [transaction_flags, transaction_code],
+    fci_proprietary_template,
+    endpoint_public_key_x,
+])
+
+endpoint_persistent_key = hkdf_sha256(
+    derived_key,
+    shared_data,
+    endpoint_ephemeral_public_key_x,
+    0x20,
+)
+```
+
 ## EXCHANGE
 
 Using the secure channel established in AUTH0 or AUTH1, the reader may read arbitrary data from, or write arbitrary data to, the endpoint's mailbox.
