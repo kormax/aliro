@@ -24,17 +24,17 @@ To preserve privacy, device endpoints withhold identifying data until a reader i
 
 Aliro commands use ISO7816 APDUs over NFC and BLE and largely follow UnifiedAccess protocols such as [CCC CarKey](https://carconnectivity.org/digital-key/) and [Apple HomeKey](https://github.com/kormax/apple-home-key), but with different cryptography, command parameters, and some expanded capabilities:
 
-| Command                     | CLA  | INS  | P1   | P2   | Command Data                          | Le                | Response Data                         | Description                                                                              |
-|-----------------------------|------|------|------|------|---------------------------------------|-------------------|---------------------------------------|------------------------------------------------------------------------------------------|
-| SELECT ALIRO PRIMARY APPLET | `00` | `A4` | `04` | `00` | `A000000909ACCE5501`                  | `00`              | BER-TLV encoded data                  | Select the primary applet to get a list of supported protocol versions and features      |
-| AUTH0                       | `80` | `80` | `00` | `00` | BER-TLV encoded data                  | [empty]           | BER-TLV encoded data                  | Attempt authentication using a cryptogram derived with HMAC-SHA256 over shared data      |
-| LOAD CERTIFICATE            | `80` | `D1` | `00` | `00` | ASN.1 encoded certificate             | [empty]           | [empty]                               | Supply a compressed reader certificate signed by the known reader group public key       |
-| AUTH1                       | `80` | `81` | `00` | `00` | BER-TLV encoded data                  | [empty]           | Encrypted BER-TLV encoded data        | Authenticate with a known public key or with a key from a supplied, verified certificate |
-| EXCHANGE                    | `80` | `C9` | `00` | `00` | Encrypted BER-TLV encoded data        | [empty]           | Encrypted BER-TLV encoded data        | Write or read data from the endpoint's mailbox memory                                    |
-| CONTROL FLOW                | `80` | `3C` | `00` | `00` | BER-TLV encoded data                  | [empty]           | [empty]                               | Notify the endpoint about the state of the transaction                                   |
-| SELECT ALIRO STEP UP APPLET | `00` | `A4` | `04` | `00` | `A000000909ACCE5502`                  | `00`              | [empty]                               | Select the step-up applet                                                                |
-| ENVELOPE                    | `00` | `C3` | `00` | `00` | BER-TLV with nested NDEF or CBOR data | [empty]           | BER-TLV with nested NDEF or CBOR data | Request attestation or revocation certificates from the endpoint                         |
-| GET RESPONSE                | `00` | `C0` | `00` | `00` | [empty]                               | [expected length] | Parts of CBOR with encrypted data     | Read leftover certificate data from the previous ENVELOPE request                        |
+| Command                     | CLA  | INS  | P1   | P2   | Command Data                   | Le                | Response Data                     | Description                                                                              |
+|-----------------------------|------|------|------|------|--------------------------------|-------------------|-----------------------------------|------------------------------------------------------------------------------------------|
+| SELECT ALIRO PRIMARY APPLET | `00` | `A4` | `04` | `00` | `A000000909ACCE5501`           | `00`              | BER-TLV encoded data              | Select the primary applet to get a list of supported protocol versions and features      |
+| AUTH0                       | `80` | `80` | `00` | `00` | BER-TLV encoded data           | [empty]           | BER-TLV encoded data              | Attempt authentication and optionally request a FAST cryptogram tied to a shared context |
+| LOAD CERTIFICATE            | `80` | `D1` | `00` | `00` | ASN.1 encoded certificate      | [empty]           | [empty]                           | Supply a compressed reader certificate signed by the known reader group public key       |
+| AUTH1                       | `80` | `81` | `00` | `00` | BER-TLV encoded data           | [empty]           | Encrypted BER-TLV encoded data    | Authenticate with a known public key or with a key from a supplied, verified certificate |
+| EXCHANGE                    | `80` | `C9` | `00` | `00` | Encrypted BER-TLV encoded data | [empty]           | Encrypted BER-TLV encoded data    | Write or read data from the endpoint's mailbox memory                                    |
+| CONTROL FLOW                | `80` | `3C` | `00` | `00` | BER-TLV encoded data           | [empty]           | [empty]                           | Notify the endpoint about the state of the transaction                                   |
+| SELECT ALIRO STEP UP APPLET | `00` | `A4` | `04` | `00` | `A000000909ACCE5502`           | `00`              | BER-TLV encoded data              | Select the step-up applet                                                                |
+| ENVELOPE                    | `00` | `C3` | `00` | `00` | BER-TLV with nested CBOR data  | [empty] or `00`   | BER-TLV with nested CBOR data     | Request attestation or revocation certificates from the endpoint                         |
+| GET RESPONSE                | `00` | `C0` | `00` | `00` | [empty]                        | [expected length] | Parts of CBOR with encrypted data | Read leftover certificate data from the previous ENVELOPE request                        |
 
 Running these commands moves the credential-holder endpoint through the following states:
 ```mermaid
@@ -71,7 +71,7 @@ stateDiagram-v2
 
   StepUp --> StepUp : Envelope/Get Response
 ```
-<sub>Deselection or Control Flow is possible in all states, hence it is not displayed in the diagram</sub>
+<sub>Deselection or Control Flow is possible in all states, so it is not displayed in the diagram.</sub>
 
 ## SELECT ALIRO PRIMARY APPLET
 
@@ -196,7 +196,7 @@ Data is formatted as an array of BER-TLV values:
 ```
 
 - Tag `86` contains uncompressed device ephemeral key;
-- Tag `9D` is present only if FAST authentication flow was indicated in request tag `41` and contains a cryptogram generated with HMAC-SHA256 over the context established with this reader during previous communication sessions. In case this context is lost, or it is a first authentication attempt, the device returns bogus data here to preserve privacy.
+- Tag `9D` is present only if FAST authentication flow was indicated in request tag `41` and contains authenticated cryptogram data tied to the context established with this reader during previous communication sessions. In case this context is lost, or it is a first authentication attempt, the device returns bogus data here to preserve privacy.
 
 > [!NOTE]  
 > Specifics on cryptogram generation and secure context establishment will be provided later
@@ -339,15 +339,15 @@ Data is formatted as an array of BER-TLV values:
   323032352D30382D30315430313A30303A30305A
 ```
 
-- Tag `4E` contains part of the device identifier; it is only sent if standard authentication is attempted.
-- Tag `5A` contains the long-term device public key; it is only sent if fast authentication was attempted.
+- Tag `4E` contains part of the device identifier; it is only sent if requested in tag `41`;
+- Tag `5A` contains the long-term device public key; it is only sent if requested in tag `41`;
 - Tag `9E` contains a signature over the common transaction data;
 - Tag `5E` may contain an identifier for the credential medium;
 - Tag `91` contains the credential issuance date.
 
 ## EXCHANGE
 
-Using the secure channel established in AUTH0 or AUTH1, the reader may read or write arbitrary data to the endpoint's mailbox.
+Using the secure channel established in AUTH0 or AUTH1, the reader may read arbitrary data from, or write arbitrary data to, the endpoint's mailbox.
 
 ### Command
 
@@ -365,7 +365,8 @@ Using the secure channel established in AUTH0 or AUTH1, the reader may read or w
 
 #### Data format
 
-Data sent by the reader contains a request object that describes a list of operations to perform with a mailbox:
+Data sent by the reader is wrapped in a single top-level TLV container with tag `BA`.  
+The container value is a request object that describes a list of operations to perform with a mailbox:
 
 - Tag `87` - read data, consisting of 4 bytes and returning [LENGTH] bytes:
   - OFFSET_HI;
@@ -382,9 +383,9 @@ Data sent by the reader contains a request object that describes a list of opera
   - LENGTH_HI;
   - LENGTH_LO;
   - SET_TO_VALUE.
-- Tag `97` - indicates whether this is the last command in the atomic session:
-  - `01`: last command;
-  - `00`: more commands pending.
+- Tag `8C` - indicates whether this is the last command in the atomic session:
+  - `00`: last command;
+  - `01`: more commands pending.
 
 ### Response
 
@@ -469,7 +470,7 @@ This command is used after the primary flow has completed in order to retrieve a
 | SW1   | `90`                         |
 | SW2   | `00`                         |
 
-FCI template value is identical to the one returned by the SELECT ALIRO PRIMARY APPLET command.
+FCI template value is similar to the one returned by the SELECT ALIRO PRIMARY APPLET command.
 
 ## ENVELOPE
 
@@ -479,35 +480,41 @@ This command is used by the reader to request attestation and revocation certifi
 
 #### APDU format
 
-| Field | Value                                 |
-|-------|---------------------------------------|
-| CLA   | `00`                                  |
-| INS   | `C3`                                  |
-| P1    | `00`                                  |
-| P2    | `00`                                  |
-| Lc    | length(data)                          |
-| Data  | BER-TLV with nested NDEF or CBOR data |
-| Le    | `00`                                  |
+| Field | Value                         |
+|-------|-------------------------------|
+| CLA   | `00`                          |
+| INS   | `C3`                          |
+| P1    | `00`                          |
+| P2    | `00`                          |
+| Lc    | length(data)                  |
+| Data  | BER-TLV with nested CBOR data |
+| Le    | [empty] or `00`               |
 
-> [!NOTE]  
-> Request data format requires further investigation and will be provided later
+#### Data format
+
+Command data is wrapped in a top-level BER-TLV tag `53`.  
+The value of tag `53` is a CBOR object that carries encrypted request bytes in the `data` field.
 
 ### Response
 
 #### APDU format
 
-| Field | Value                             |
-|-------|-----------------------------------|
-| Data  | Parts of CBOR with encrypted data |
-| SW1   | `90`                              |
-| SW2   | `00`                              |
+| Field | Value                                                 |
+|-------|-------------------------------------------------------|
+| Data  | BER-TLV payload chunk with nested encrypted CBOR data |
+| SW1   | `61` (more data) or `90` (final)                      |
+| SW2   | remaining length if SW1 is `61`, else `00`            |
+
+When `SW1=61`, the reader should continue with GET RESPONSE and append returned chunks until `SW1=90`.
 
 > [!NOTE]  
-> Specifics on the decryption/encryption of the certificate data will be provided later
+> Depending on the device implementation, BER-TLV response payload may use either layout:
+> - CBOR object with a `data` field that contains the encrypted CBOR bytes.
+> - Encrypted CBOR bytes directly at the outer layer, without the extra `data` wrapper.
 
 ## GET RESPONSE
 
-If a response to ENVELOPE could not fit all the certificate data, this command is used repeatedly until everything is returned.
+If an ENVELOPE response returns `SW1=61`, this command is used repeatedly until all data is returned.
 
 ### Command
 
@@ -527,11 +534,11 @@ If a response to ENVELOPE could not fit all the certificate data, this command i
 
 #### APDU format
 
-| Field | Value                             |
-|-------|-----------------------------------|
-| Data  | Parts of CBOR with encrypted data |
-| SW1   | `90`                              |
-| SW2   | `00`                              |
+| Field | Value                                           |
+|-------|-------------------------------------------------|
+| Data  | BER-TLV payload chunks with encrypted CBOR data |
+| SW1   | `61` (more data) or `90` (final)                |
+| SW2   | remaining length if SW1 is `61`, else `00`      |
 
 
 # Extras
@@ -539,10 +546,11 @@ If a response to ENVELOPE could not fit all the certificate data, this command i
 ## Protocol versions
 
 Currently, two protocol versions have been observed in the wild:
-- `0.9` - Apple/Google Wallet;
-- `1.0` - Samsung Wallet.
+- `0.9` - Apple Wallet; Google Wallet;
+- `1.0` - Apple Wallet (since 26.4); Samsung Wallet.
 
-The differences between the versions are yet unknown; they are suspected to differ in the command formats for EXCHANGE and SELECT STEP UP/ENVELOPE.
+Primary protocol commands, including SELECT, AUTH0, AUTH1, and underlying cryptography, seem to be unaffected by the chosen protocol version.
+The difference is suspected to be present in the command formats for EXCHANGE and ENVELOPE.
 
 ## Enhanced Contactless Polling
 
