@@ -74,6 +74,95 @@ stateDiagram-v2
 ```
 <sub>Deselection or Control Flow is possible in all states, so it is not displayed in the diagram.</sub>
 
+## Secure Channel
+
+Aliro secure messaging uses directional AES-GCM keys and per-direction counters.  
+Channel keys are derived during authentication and then reused by EXCHANGE, ENVELOPE, and GET RESPONSE.
+
+Aliro uses three secure channels with different keys and independent state:
+- NFC Exchange
+- BLE Exchange
+- StepUp
+
+Each channel uses a reader/device key pair generated as a result of AUTH0 or AUTH1.
+
+| Item                    | Value                                 |
+|-------------------------|---------------------------------------|
+| Cipher                  | AES-GCM                               |
+| Authentication tag size | `16` bytes (`128` bits)               |
+| IV format               | `[MODE (8 bytes)] [COUNTER (4 bytes)]` |
+| Reader mode prefix      | `0000000000000000`                    |
+| Endpoint mode prefix    | `0000000000000001`                    |
+
+- Reader encrypts outbound command payload with the channel's `SKReader`.
+- Endpoint encrypts outbound response payload with the channel's `SKDevice`.
+- Reader decrypts inbound responses with `SKDevice`; endpoint decrypts inbound commands with `SKReader`.
+- Counters are maintained per direction and incremented after each encrypted message.
+- If a response returns `61xx`, use GET RESPONSE to collect remaining encrypted chunks before final payload processing.
+
+Example (Python pseudocode):
+
+```python
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+READER_MODE = bytes.fromhex("0000000000000000")
+ENDPOINT_MODE = bytes.fromhex("0000000000000001")
+
+
+def encrypt_aes_gcm(key: bytes, iv: bytes, plaintext: bytes) -> bytes:
+    assert len(iv) == 12, "IV must be 12 bytes for GCM mode"
+    encryptor = Cipher(algorithms.AES(key), modes.GCM(iv)).encryptor()
+    return encryptor.update(plaintext) + encryptor.finalize() + encryptor.tag
+
+
+def decrypt_aes_gcm(key: bytes, iv: bytes, ciphertext: bytes) -> bytes:
+    encrypted, tag = ciphertext[:-16], ciphertext[-16:]
+    decryptor = Cipher(algorithms.AES(key), modes.GCM(iv, tag)).decryptor()
+    return decryptor.update(encrypted) + decryptor.finalize()
+
+
+class AliroSecureChannel:
+    def __init__(
+        self,
+        sk_reader: bytes,
+        sk_device: bytes,
+        counter_reader: int = 1,
+        counter_endpoint: int = 1,
+    ):
+        self.sk_reader = sk_reader
+        self.sk_device = sk_device
+        self.counter_reader = counter_reader
+        self.counter_endpoint = counter_endpoint
+
+    def encrypt_reader_data(self, plaintext: bytes) -> bytes:
+        # Use when the reader sends encrypted payload to the endpoint.
+        iv = READER_MODE + self.counter_reader.to_bytes(4, "big")
+        ciphertext = plaintext if not plaintext else encrypt_aes_gcm(self.sk_reader, iv, plaintext)
+        self.counter_reader += 1
+        return ciphertext
+
+    def decrypt_reader_data(self, ciphertext: bytes) -> bytes:
+        # Use when endpoint-side logic needs to decrypt reader-originated payload.
+        iv = READER_MODE + self.counter_reader.to_bytes(4, "big")
+        plaintext = ciphertext if not ciphertext else decrypt_aes_gcm(self.sk_reader, iv, ciphertext)
+        self.counter_reader += 1
+        return plaintext
+
+    def encrypt_endpoint_data(self, plaintext: bytes) -> bytes:
+        # Use when the endpoint sends encrypted payload back to the reader.
+        iv = ENDPOINT_MODE + self.counter_endpoint.to_bytes(4, "big")
+        ciphertext = plaintext if not plaintext else encrypt_aes_gcm(self.sk_device, iv, plaintext)
+        self.counter_endpoint += 1
+        return ciphertext
+
+    def decrypt_endpoint_data(self, ciphertext: bytes) -> bytes:
+        # Use when reader-side logic decrypts endpoint-originated payload.
+        iv = ENDPOINT_MODE + self.counter_endpoint.to_bytes(4, "big")
+        plaintext = ciphertext if not ciphertext else decrypt_aes_gcm(self.sk_device, iv, ciphertext)
+        self.counter_endpoint += 1
+        return plaintext
+```
+
 ## SELECT ALIRO PRIMARY APPLET
 
 This is an initial command used to select the Aliro applet and receive capability information from the device endpoint.
@@ -744,7 +833,7 @@ endpoint_persistent_key = hkdf_sha256(
 
 ## EXCHANGE
 
-Using the secure channel established in AUTH0 or AUTH1, the reader may read arbitrary data from, or write arbitrary data to, the endpoint's mailbox.
+Using the [secure channel](#secure-channel) established in AUTH0 or AUTH1, the reader may read arbitrary data from, or write arbitrary data to, the endpoint's mailbox.
 
 ### Command
 
@@ -899,7 +988,7 @@ FCI template value is similar to the one returned by the SELECT ALIRO PRIMARY AP
 
 ## ENVELOPE
 
-This command is used by the reader to request attestation and revocation certificates from the device using the established secure channel.
+This command is used by the reader to request attestation and revocation certificates from the device using the established [secure channel](#secure-channel).
 
 ### Command
 
