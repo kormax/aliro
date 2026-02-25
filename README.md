@@ -30,11 +30,11 @@ Aliro commands use ISO7816 APDUs over NFC and BLE and largely follow UnifiedAcce
 | AUTH0                       | `80` | `80` | `00` | `00` | BER-TLV encoded data           | [empty]           | BER-TLV encoded data              | Attempt authentication and optionally request a FAST cryptogram tied to a shared context |
 | LOAD CERTIFICATE            | `80` | `D1` | `00` | `00` | ASN.1 encoded certificate      | [empty]           | [empty]                           | Supply a compressed reader certificate signed by the known reader group public key       |
 | AUTH1                       | `80` | `81` | `00` | `00` | BER-TLV encoded data           | [empty]           | Encrypted BER-TLV encoded data    | Authenticate with a known public key or with a key from a supplied, verified certificate |
-| EXCHANGE                    | `80` | `C9` | `00` | `00` | Encrypted BER-TLV encoded data | [empty]           | Encrypted BER-TLV encoded data    | Write or read data from the endpoint's mailbox memory                                    |
+| EXCHANGE                    | `80` | `C9` | `00` | `00` | Encrypted BER-TLV encoded data | [empty]           | Encrypted data                    | Write or read data from the endpoint's mailbox memory                                    |
 | CONTROL FLOW                | `80` | `3C` | `00` | `00` | BER-TLV encoded data           | [empty]           | [empty]                           | Notify the endpoint about the state of the transaction                                   |
 | SELECT ALIRO STEP UP APPLET | `00` | `A4` | `04` | `00` | `A000000909ACCE5502`           | `00`              | BER-TLV encoded data              | Select the step-up applet                                                                |
 | ENVELOPE                    | `00` | `C3` | `00` | `00` | BER-TLV with nested CBOR data  | [empty] or `00`   | BER-TLV with nested CBOR data     | Request attestation or revocation certificates from the endpoint                         |
-| GET RESPONSE                | `00` | `C0` | `00` | `00` | [empty]                        | [expected length] | Parts of CBOR with encrypted data | Read leftover certificate data from the previous ENVELOPE request                        |
+| GET RESPONSE                | `00` | `C0` | `00` | `00` | [empty]                        | [expected length] | Remaining encrypted response data | Read leftover response bytes after a command returns `61 xx`                             |
 
 Running these commands moves the credential-holder endpoint through the following states:
 ```mermaid
@@ -46,17 +46,18 @@ stateDiagram-v2
   state "Certificate loaded" as LoadCert
   state "Auth1 authenticated" as Auth1Auth
   state "Step Up" as StepUp
-  state "Exchange" as Exchange
+  state "Exchange Auth0" as ExchangeAuth0
+  state "Exchange Auth1" as ExchangeAuth1
 
   [*] --> Deselected
   Deselected --> Unauth : Select Aliro primary applet
   Unauth --> Auth0Auth : Auth0 (known mutual key)
   Unauth --> Auth0Skip : Auth0 (skipped or unknown mutual key)
 
+  Auth0Auth --> ExchangeAuth0 : Exchange
+  ExchangeAuth0 --> ExchangeAuth0 : Exchange/Get Response
   Auth0Auth --> LoadCert : Load certificate
   Auth0Auth --> Auth1Auth : Auth1 (with public key)
-  Auth0Auth --> Exchange : Exchange
-  Auth0Auth --> StepUp : Select Aliro Step Up applet
 
   Auth0Skip --> LoadCert : Load certificate
   Auth0Skip --> Auth1Auth : Auth1 (with public key)
@@ -64,10 +65,10 @@ stateDiagram-v2
   LoadCert --> Auth1Auth : Auth1 (with certificate)
 
   Auth1Auth --> StepUp : Select Aliro Step Up applet
-  Auth1Auth --> Exchange : Exchange
+  Auth1Auth --> ExchangeAuth1 : Exchange
 
-  Exchange --> Exchange : Exchange
-  Exchange --> StepUp : Select Aliro Step Up applet
+  ExchangeAuth1 --> ExchangeAuth1 : Exchange/Get Response
+  ExchangeAuth1 --> StepUp : Select Aliro Step Up applet
 
   StepUp --> StepUp : Envelope/Get Response
 ```
@@ -764,21 +765,21 @@ Using the secure channel established in AUTH0 or AUTH1, the reader may read arbi
 Data sent by the reader is wrapped in a single top-level TLV container with tag `BA`.  
 The container value is a request object that describes a list of operations to perform with a mailbox:
 
-- Tag `87` - read data, consisting of 4 bytes and returning [LENGTH] bytes:
-  - OFFSET_HI;
-  - OFFSET_LO;
-  - LENGTH_HI;
-  - LENGTH_LO.
-- Tag `8A` - write data, consisting of 2 + length(data) bytes and returning 1 byte:
-  - OFFSET_HI;
-  - OFFSET_LO;
+- Tag `87` - read data, consisting of 4 bytes and returning 2 + [LENGTH] bytes:
+  - `OFFSET_HI`;
+  - `OFFSET_LO`;
+  - `LENGTH_HI`;
+  - `LENGTH_LO`.
+- Tag `8A` - write data, consisting of 2 + [LENGTH] bytes:
+  - `OFFSET_HI`;
+  - `OFFSET_LO`;
   - [data].
-- Tag `95` - set data, which sets all bytes in the range to the given value; consists of 5 bytes and returns 1 byte:
-  - OFFSET_HI;
-  - OFFSET_LO;
-  - LENGTH_HI;
-  - LENGTH_LO;
-  - SET_TO_VALUE.
+- Tag `95` - set data, which sets all bytes in the range to the given value; consists of 5 bytes:
+  - `OFFSET_HI`;
+  - `OFFSET_LO`;
+  - `LENGTH_HI`;
+  - `LENGTH_LO`;
+  - `SET_TO_VALUE`.
 - Tag `8C` - indicates whether this is the last command in the atomic session:
   - `00`: last command;
   - `01`: more commands pending.
@@ -787,13 +788,41 @@ The container value is a request object that describes a list of operations to p
 
 #### APDU format
 
-| Field | Value                  |
-|-------|------------------------|
-| Data  | Encrypted BER-TLV data |
-| SW1   | `90`                   |
-| SW2   | `00`                   |
+| Field | Value                            |
+|-------|----------------------------------|
+| Data  | Encrypted data                   |
+| SW1   | `61` (more data) or `90` (final) |
+| SW2   | `00`                             |
 
-When decrypted, the response starts with a 2-byte length field for the encrypted payload, followed by operation results and a trailing status word.
+#### Data format
+
+After secure-channel decryption, EXCHANGE response plaintext is:
+
+```text
+[READ_RESULTS...][00][02][STATUS_HI][STATUS_LO]
+```
+
+- `READ_RESULTS` contains zero or more read result entries;
+- trailing `00 02` indicates a fixed 2-byte status field length;
+- `STATUS_HI/STATUS_LO` is the operation-batch result code.
+
+Read result entries are appended in request order, each in the following format:
+
+```text
+[LEN_HI][LEN_LO][READ_DATA...]
+```
+
+In current implementation, tags `8A` (write) and `95` (set) do not append per-operation bytes to the response payload.
+
+When EXCHANGE returns `61 00`, the reader should continue with GET RESPONSE and append returned chunks until `90 00`.
+
+Observed status codes:
+
+| Status word | Meaning                             |
+|-------------|-------------------------------------|
+| `0000`      | Success                             |
+| `0001`      | Mailbox read range is out of bounds |
+| `0002`      | Invalid/malformed EXCHANGE payload  |
 
 ## CONTROL FLOW
 
@@ -910,7 +939,7 @@ When `SW1=61`, the reader should continue with GET RESPONSE and append returned 
 
 ## GET RESPONSE
 
-If an ENVELOPE response returns `SW1=61`, this command is used repeatedly until all data is returned.
+If EXCHANGE or ENVELOPE return `61 XX`, this command is used repeatedly until all data is returned.
 
 ### Command
 
@@ -930,11 +959,14 @@ If an ENVELOPE response returns `SW1=61`, this command is used repeatedly until 
 
 #### APDU format
 
-| Field | Value                                           |
-|-------|-------------------------------------------------|
-| Data  | BER-TLV payload chunks with encrypted CBOR data |
-| SW1   | `61` (more data) or `90` (final)                |
-| SW2   | remaining length if SW1 is `61`, else `00`      |
+| Field | Value                                      |
+|-------|--------------------------------------------|
+| Data  | Next chunk of encrypted response bytes     |
+| SW1   | `61` (more data) or `90` (final)           |
+| SW2   | remaining length when `SW1=61`, else `00`  |
+
+For ENVELOPE, returned chunks carry BER-TLV with encrypted CBOR payload.  
+For EXCHANGE, returned chunks carry encrypted EXCHANGE response bytes.
 
 
 # Extras
