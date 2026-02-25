@@ -198,8 +198,126 @@ Data is formatted as an array of BER-TLV values:
 - Tag `86` contains uncompressed device ephemeral key;
 - Tag `9D` is present only if FAST authentication flow was indicated in request tag `41` and contains authenticated cryptogram data tied to the context established with this reader during previous communication sessions. In case this context is lost, or it is a first authentication attempt, the device returns bogus data here to preserve privacy.
 
-> [!NOTE]  
-> Specifics on cryptogram generation and secure context establishment will be provided later
+#### Secure channel key derivation
+
+To validate tag `9D`, the reader attempts cryptogram decryption by deriving FAST key material from transaction data for each provisioned endpoint's persistent key in memory, until a match is found, or the list is exhausted.
+
+| Element                  | Value                                                  | Length (bytes) | Notes                                                     |
+|--------------------------|--------------------------------------------------------|----------------|-----------------------------------------------------------|
+| Reader long-term key X   | `reader_public_key_x`                                  | `32`           | X coordinate                                              |
+| Domain separator         | `"VolatileFast"`                                       | `12`           | ASCII context label                                       |
+| Reader identifier        | `reader_group_identifier + reader_instance_identifier` | `32`           | Group + instance identifier                               |
+| Transport type           | `transport_type`                                       | `1`            | NFC/contactless (`0x5E`)                                  |
+| Protocol version         | `BerTLV(0x5C, protocol_version)`                       | `4`            | Encoded TLV (`5C 02 vv vv`) for selected protocol version |
+| Reader ephemeral key X   | `reader_ephemeral_public_key_x`                        | `32`           | X coordinate                                              |
+| Transaction identifier   | `transaction_identifier`                               | `16`           | Per-transaction nonce                                     |
+| Transaction params       | `transaction_flags + transaction_code`                 | `2`            | AUTH flags + operation                                    |
+| FCI data                 | `fci_proprietary_template`                             | `variable`     | FCI proprietary template bytes                            |
+| Endpoint long-term key X | `endpoint_public_key_x`                                | `32`           | X coordinate                                              |
+
+Cryptogram-verification keying material is derived directly with HKDF-SHA256 using:
+* Endpoint persistent key as IKM
+* Serialized shared data as salt
+* Endpoint ephemeral key X as info.
+
+The output keying material is used to derive the following keys:
+* Cryptogram SK
+* Exchange SK Reader
+* Exchange SK Device
+* Bluetooth SK Reader
+* Bluetooth SK Device
+* UWB Ranging SK
+
+StepUp channel keys are not generated with AUTH0, continuing the auth flow to AUTH1 is required in that case.
+
+Example (Python pseudocode):
+
+```python
+from pseudocode import BerTLV, to_bytes
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+
+endpoint_persistent_key: bytes = ...
+
+
+def hkdf_sha256(ikm: bytes, salt: bytes, info: bytes, length: int) -> bytes:
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=length,
+        salt=to_bytes(salt),
+        info=to_bytes(info),
+    ).derive(ikm)
+
+
+shared_data = to_bytes([
+    reader_public_key_x,
+    "VolatileFast",
+    reader_group_identifier + reader_instance_identifier,
+    transport_type,
+    BerTLV(0x5C, value=protocol_version),
+    reader_ephemeral_public_key_x,
+    transaction_identifier,
+    [transaction_flags, transaction_code],
+    fci_proprietary_template,
+    endpoint_public_key_x,
+])
+
+okm = hkdf_sha256(
+    endpoint_persistent_key,
+    shared_data,
+    endpoint_ephemeral_public_key_x,
+    key_size * 10,
+)
+
+cryptogram_sk = okm[0x00:0x20]
+
+exchange_sk_reader = okm[0x20:0x40]
+exchange_sk_device = okm[0x40:0x60]
+
+ble_input_material = okm[0x60:0x80]
+
+uwb_ranging_sk = okm[0x80:0xA0]
+
+ble_sk_reader = hkdf_sha256(
+    ble_input_material,
+    b"\x00" * 32,
+    b"BleSKReader",
+    key_size * 2,
+)
+ble_sk_device = hkdf_sha256(
+    ble_input_material,
+    b"\x00" * 32,
+    b"BleSKDevice",
+    key_size * 2,
+)
+```
+
+Using the derived `cryptogram_sk`, reader can attempt to decrypt the cryptogram using AES-GCM with zero-IV:
+
+```python
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+iv = b"\x00" * 12
+ciphertext, tag = cryptogram[:-16], cryptogram[-16:]
+decryptor = Cipher(
+    algorithms.AES(cryptogram_sk),
+    modes.GCM(iv, tag),
+).decryptor()
+plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+```
+
+Successful decryption equals successful authentication, thanks to AES-GCM's authenticated encryption mode.
+
+Decrypted cryptogram is formatted as BER-TLV and contains the following tags:
+
+| Tag  | Field                 | Expected length (bytes) | Notes                                      |
+|------|-----------------------|-------------------------|--------------------------------------------|
+| `5E` | Authentication status | `2`                     | Endpoint auth status value                 |
+| `91` | Issued at             | `20`                    | All-zero bytes if issuance date is unset   |
+| `92` | Expires at            | `20`                    | All-zero bytes if expiration date is unset |
+
 
 ## LOAD CERTIFICATE
 
