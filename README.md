@@ -6,11 +6,11 @@
  <img src="./assets/ALIRO.GOOGLE.webp" alt="Aliro-based card used in Google Wallet" width=200px>
 </p>
 
+> [!Note]
+> On February 26, 2026, the Connectivity Standards Alliance announced the release of Aliro 1.0: [Introducing Aliro 1.0: A Unified Standard to Transform the Access Control Ecosystem](https://csa-iot.org/newsroom/introducing-aliro-1-0-a-unified-standard-to-transform-the-access-control-ecosystem/).
+
 > [!NOTE]  
 > This repository previously contained observations on the development of the standard. This information has been moved into [OBSERVATIONS.md](OBSERVATIONS.md).
-
-> [!WARNING]
-> The technical aspects of the protocol are still being researched and verified, so some information currently present here may be incomplete or partially incorrect.
 
 # Overview
 
